@@ -18,4 +18,12 @@ The reinforcement learning implementations used in this project are adapted from
 | Algorithm | Environment | Config |
 |----------|-------------|--------|
 | DER Atari 100K | ALE/Qbert-v5 | `experiment=der/qbert_atari100k` |
+| DER Atari 100K | ALE/BattleZone-v5 | `experiment=der/battlezone_atari100k` |
 | SPR Atari 100K | ALE/Qbert-v5 | `experiment=spr/qbert_atari100k` |
+| SPR Atari 100K | ALE/BattleZone-v5 | `experiment=spr/battlezone_atari100k` |
+
+Batch Atari 100K runs can be launched with:
+
+```bash
+scripts/run_atari100k_der_spr_batch.sh
+```

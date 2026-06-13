@@ -37,6 +37,17 @@ Implemented:
 - `DERAtari100KAlgorithm`
 - `SPRAtari100KAlgorithm`
 
+Available experiment configs:
+
+- `experiment=der/qbert_atari100k`
+- `experiment=der/battlezone_atari100k`
+- `experiment=spr/qbert_atari100k`
+- `experiment=spr/battlezone_atari100k`
+
+The batch script `scripts/run_atari100k_der_spr_batch.sh` runs DER and SPR on
+Qbert and BattleZone for seeds 1-3, evaluates each final checkpoint, and prints
+a compact results table at the end.
+
 Planned follow-up branches:
 
 - SR-SPR

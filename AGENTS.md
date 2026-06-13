@@ -14,7 +14,9 @@ Implemented experiments:
 | DQN       | CartPole-v1    | `experiment=dqn/cartpole`     |
 | DQN       | ALE/Pong-v5    | `experiment=dqn/pong`         |
 | DER       | ALE/Qbert-v5   | `experiment=der/qbert_atari100k` |
+| DER       | ALE/BattleZone-v5 | `experiment=der/battlezone_atari100k` |
 | SPR       | ALE/Qbert-v5   | `experiment=spr/qbert_atari100k` |
+| SPR       | ALE/BattleZone-v5 | `experiment=spr/battlezone_atari100k` |
 | DDPG      | HalfCheetah-v4 | `experiment=ddpg/halfcheetah` |
 | A2C       | HalfCheetah-v4 | `experiment=a2c/halfcheetah`  |
 
