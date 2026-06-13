@@ -9,8 +9,8 @@ affects learning lives in the algorithm.
 
 Per-iteration metrics emitted on logging boundaries mirror the torchrl SOTA
 DQN reference (sota-implementations/dqn/dqn_cartpole.py):
-  - ``train/episode_reward``, ``train/episode_length``: mean over episodes
-    that completed inside the batch.
+  - ``train/raw_reward`` / ``train/clip_reward`` and ``train/episode_length``:
+    mean over episodes that completed inside the batch.
   - ``train/q_values``: mean Q-value of the actions actually executed.
   - ``time/collect``, ``time/step``, ``time/speed``: collector wait, in-step
     optimisation time, and frames/second for the iteration.
@@ -96,9 +96,19 @@ def _batch_metrics(batch: TensorDict) -> dict[str, float]:
     if done is not None and done.bool().any():
         mask = done.bool()
         episode_rewards = flat.get(("next", "episode_reward"), default=None)
+        raw_episode_rewards = flat.get(("next", "raw_episode_reward"), default=None)
+        if raw_episode_rewards is not None:
+            out["train/raw_reward"] = (
+                raw_episode_rewards[mask].float().mean().item()
+            )
+            if episode_rewards is not None:
+                out["train/clip_reward"] = (
+                    episode_rewards[mask].float().mean().item()
+                )
         if episode_rewards is not None:
-            out["train/episode_reward"] = (
-                episode_rewards[mask].float().mean().item()
+            out.setdefault(
+                "train/raw_reward",
+                episode_rewards[mask].float().mean().item(),
             )
         episode_lengths = flat.get(("next", "step_count"), default=None)
         if episode_lengths is not None:

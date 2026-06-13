@@ -1,4 +1,4 @@
-name: ALE/Pong-v5
+name: ALE/BattleZone-v5
 gym_backend: gymnasium
 gym_kwargs:
   frame_skip: 4
@@ -8,7 +8,7 @@ gym_kwargs:
 
 # Mirrors the SOTA reference's training transform stack:
 # https://github.com/pytorch/rl/blob/main/sota-implementations/dqn/utils_atari.py
-# EndOfLifeTransform + SignTransform are train-only; see pong_eval.yaml for the
+# EndOfLifeTransform + SignTransform are train-only; see battlezone_eval.yaml for the
 # evaluation variant.
 transforms:
   - _target_: torchrl.envs.NoopResetEnv

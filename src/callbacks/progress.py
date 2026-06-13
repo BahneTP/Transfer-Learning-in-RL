@@ -26,8 +26,8 @@ class ProgressCallback:
         )
         self._last_step = 0
 
-    # Keys that represent mean episode reward across algorithms
-    _REWARD_KEYS = ("train/episode_reward",)
+    _POSTFIX_SKIP_KEYS = ("time/speed", "time/step", "time/collect")
+    _POSTFIX_PRIORITY_KEYS = ("train/raw_reward", "train/clip_reward")
 
     def on_step_end(self, metrics: dict[str, float], step: int) -> None:
         if self._bar is None:
@@ -36,18 +36,20 @@ class ProgressCallback:
         self._bar.update(delta)
         self._last_step = step
 
-        # Pin reward first so it appears right after frames/s
         postfix: dict[str, str] = {}
-        for key in self._REWARD_KEYS:
-            if key in metrics and isinstance(metrics[key], (int, float)):
-                postfix["reward"] = f"{metrics[key]:.4g}"
-                break
+        for key in self._POSTFIX_PRIORITY_KEYS:
+            value = metrics.get(key)
+            if isinstance(value, (int, float)):
+                postfix[key] = f"{value:.4g}"
 
-        # Append remaining numeric metrics (skip already-shown reward keys)
         for k, v in metrics.items():
-            if k in self._REWARD_KEYS or not isinstance(v, (int, float)):
+            if (
+                k in self._POSTFIX_PRIORITY_KEYS
+                or k in self._POSTFIX_SKIP_KEYS
+                or not isinstance(v, (int, float))
+            ):
                 continue
-            postfix[k.split("/")[-1]] = f"{v:.4g}"
+            postfix[k] = f"{v:.4g}"
 
         if postfix:
             self._bar.set_postfix(postfix)
