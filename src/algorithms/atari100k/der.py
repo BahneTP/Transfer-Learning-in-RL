@@ -191,16 +191,23 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
         updates = max(1, int(self.replay_ratio * flat.numel() // self.batch_size))
         losses = torch.zeros(updates, device=self.device)
         grad_norms = torch.zeros(updates, device=self.device)
+        extra_metrics: dict[str, list[torch.Tensor]] = {}
         for update in range(updates):
             metrics = self._train_one_update()
             losses[update] = metrics["loss"]
             grad_norms[update] = metrics["grad_norm"]
-        return {
+            for key, value in metrics.items():
+                if key not in {"loss", "grad_norm"}:
+                    extra_metrics.setdefault(key, []).append(value.detach())
+        out = {
             "train/q_loss": losses.mean().item(),
             "train/grad_norm": grad_norms.mean().item(),
             "train/epsilon": float(epsilon),
             "train/replay_size": float(len(self.replay)),
         }
+        for key, values in extra_metrics.items():
+            out[f"train/{key}"] = torch.stack(values).mean().item()
+        return out
 
     def get_policy(self) -> TensorDictModule:
         return self._policy

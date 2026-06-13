@@ -35,10 +35,10 @@ The Atari 100K configs use:
 Implemented:
 
 - `DERAtari100KAlgorithm`
+- `SPRAtari100KAlgorithm`
 
 Planned follow-up branches:
 
-- SPR
 - SR-SPR
 - BBF
 - SAC-BBF

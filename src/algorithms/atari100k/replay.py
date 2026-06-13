@@ -60,6 +60,9 @@ class ReplayBatch:
     discounts: torch.Tensor
     weights: torch.Tensor
     indices: np.ndarray
+    future_states: torch.Tensor | None = None
+    rollout_actions: torch.Tensor | None = None
+    same_trajectory: torch.Tensor | None = None
 
 
 class PrioritizedNStepReplay:
@@ -117,6 +120,14 @@ class PrioritizedNStepReplay:
 
     def sample(self, batch_size: int, device: torch.device) -> ReplayBatch:
         indices = self._sample_indices(batch_size)
+        return self._build_batch(indices, device, jumps=0)
+
+    def sample_sequence(self, batch_size: int, device: torch.device, *, jumps: int) -> ReplayBatch:
+        indices = self._sample_indices(batch_size)
+        return self._build_batch(indices, device, jumps=jumps)
+
+    def _build_batch(self, indices: np.ndarray, device: torch.device, *, jumps: int) -> ReplayBatch:
+        batch_size = int(indices.shape[0])
         returns = np.zeros((batch_size,), dtype=np.float32)
         discounts = np.zeros((batch_size,), dtype=np.float32)
         terminals = np.zeros((batch_size,), dtype=np.float32)
@@ -152,6 +163,9 @@ class PrioritizedNStepReplay:
             discounts=torch.as_tensor(discounts, device=device),
             weights=torch.as_tensor(weights, device=device),
             indices=indices,
+            future_states=self._future_states(indices, jumps, device) if jumps > 0 else None,
+            rollout_actions=self._rollout_actions(indices, jumps, device) if jumps > 0 else None,
+            same_trajectory=self._same_trajectory(indices, jumps, device) if jumps > 0 else None,
         )
 
     def set_priority(self, indices: np.ndarray, priorities: np.ndarray) -> None:
@@ -193,6 +207,30 @@ class PrioritizedNStepReplay:
         if self.size < self.capacity:
             indices = np.minimum(indices, self.size - 1)
         return indices
+
+    def _future_states(self, indices: np.ndarray, jumps: int, device: torch.device) -> torch.Tensor:
+        future = np.zeros((indices.shape[0], jumps, *self.observation_shape), dtype=np.uint8)
+        for row, index in enumerate(indices):
+            for j in range(jumps):
+                future[row, j] = self.next_states[(index + j) % self.capacity]
+        return torch.as_tensor(future, device=device)
+
+    def _rollout_actions(self, indices: np.ndarray, jumps: int, device: torch.device) -> torch.Tensor:
+        actions = np.zeros((indices.shape[0], jumps), dtype=np.int64)
+        for row, index in enumerate(indices):
+            for j in range(jumps):
+                actions[row, j] = self.actions[(index + j) % self.capacity]
+        return torch.as_tensor(actions, device=device)
+
+    def _same_trajectory(self, indices: np.ndarray, jumps: int, device: torch.device) -> torch.Tensor:
+        mask = np.ones((indices.shape[0], jumps), dtype=np.float32)
+        for row, index in enumerate(indices):
+            alive = True
+            for j in range(jumps):
+                mask[row, j] = 1.0 if alive else 0.0
+                if self.dones[(index + j) % self.capacity]:
+                    alive = False
+        return torch.as_tensor(mask, device=device)
 
     def _to_uint8(self, state: torch.Tensor) -> np.ndarray:
         state = state.detach().cpu()

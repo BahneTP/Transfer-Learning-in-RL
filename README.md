@@ -18,3 +18,4 @@ The reinforcement learning implementations used in this project are adapted from
 | Algorithm | Environment | Config |
 |----------|-------------|--------|
 | DER Atari 100K | ALE/Qbert-v5 | `experiment=der/qbert_atari100k` |
+| SPR Atari 100K | ALE/Qbert-v5 | `experiment=spr/qbert_atari100k` |

@@ -14,6 +14,7 @@ Implemented experiments:
 | DQN       | CartPole-v1    | `experiment=dqn/cartpole`     |
 | DQN       | ALE/Pong-v5    | `experiment=dqn/pong`         |
 | DER       | ALE/Qbert-v5   | `experiment=der/qbert_atari100k` |
+| SPR       | ALE/Qbert-v5   | `experiment=spr/qbert_atari100k` |
 | DDPG      | HalfCheetah-v4 | `experiment=ddpg/halfcheetah` |
 | A2C       | HalfCheetah-v4 | `experiment=a2c/halfcheetah`  |
 
@@ -284,6 +285,7 @@ src/
   algorithms/
     atari100k/
       der.py                 — DER Atari 100K with C51, NoisyNet, PER, n-step
+      spr.py                 — SPR Atari 100K with latent transition prediction
       replay.py              — prioritized n-step replay used by Atari 100K agents
       networks.py            — Rainbow-style convolutional network blocks
       README.md              — Atari 100K algorithm notes

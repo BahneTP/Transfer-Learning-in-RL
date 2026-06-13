@@ -19,6 +19,7 @@ class RainbowOutput:
     q_values: torch.Tensor
     logits: torch.Tensor
     probabilities: torch.Tensor
+    latent: torch.Tensor | None = None
 
 
 def _apply_initializer(module: nn.Module) -> None:
@@ -87,9 +88,11 @@ class NoisyLinear(nn.Module):
             weight = self.weight_mu
             bias = self.bias_mu
         else:
-            self.reset_noise()
-            weight = self.weight_mu + self.weight_sigma * self.weight_epsilon
-            bias = self.bias_mu + self.bias_sigma * self.bias_epsilon
+            epsilon_in = self._scale_noise(self.in_features)
+            epsilon_out = self._scale_noise(self.out_features)
+            weight_epsilon = epsilon_out.outer(epsilon_in)
+            weight = self.weight_mu + self.weight_sigma * weight_epsilon
+            bias = self.bias_mu + self.bias_sigma * epsilon_out
         return F.linear(x, weight, bias)
 
 
@@ -153,6 +156,27 @@ class RainbowCNN(nn.Module):
         return self.layers(x)
 
 
+class ConvTransitionCell(nn.Module):
+    def __init__(self, *, num_actions: int, latent_dim: int, renormalize_output: bool) -> None:
+        super().__init__()
+        self.num_actions = num_actions
+        self.renormalize_output = renormalize_output
+        self.conv1 = nn.Conv2d(latent_dim + num_actions, latent_dim, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(latent_dim, latent_dim, kernel_size=3, padding=1)
+        self.apply(_apply_initializer)
+
+    def forward(self, x: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        batch, _, height, width = x.shape
+        action_onehot = F.one_hot(action.long(), num_classes=self.num_actions).float()
+        action_plane = action_onehot[:, :, None, None].expand(batch, self.num_actions, height, width)
+        out = torch.cat([x, action_plane], dim=1)
+        out = F.relu(self.conv1(out))
+        out = F.relu(self.conv2(out))
+        if self.renormalize_output:
+            out = renormalize(out)
+        return out
+
+
 class RainbowDQNNetwork(nn.Module):
     """Rainbow/DER convolutional C51 network."""
 
@@ -180,9 +204,18 @@ class RainbowDQNNetwork(nn.Module):
         self.encoder = RainbowCNN(input_channels=input_channels, width_scale=width_scale)
         with torch.no_grad():
             dummy = torch.zeros(1, input_channels, 84, 84)
-            flat_dim = int(self.encoder(dummy).reshape(1, -1).shape[-1])
+            encoded = self.encoder(dummy)
+            flat_dim = int(encoded.reshape(1, -1).shape[-1])
+            latent_dim = int(encoded.shape[1])
         self.projection = FeatureLayer(flat_dim, hidden_dim, noisy=noisy)
+        self.predictor = nn.Linear(hidden_dim, hidden_dim)
         self.head = LinearHead(hidden_dim, num_actions, num_atoms, noisy=noisy, dueling=dueling)
+        self.transition_model = ConvTransitionCell(
+            num_actions=num_actions,
+            latent_dim=latent_dim,
+            renormalize_output=renormalize_output,
+        )
+        _apply_initializer(self.predictor)
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         latent = self.encoder(preprocess_observation(x))
@@ -190,9 +223,38 @@ class RainbowDQNNetwork(nn.Module):
             latent = renormalize(latent)
         return latent
 
-    def forward(self, x: torch.Tensor, support: torch.Tensor, *, eval_mode: bool = False) -> RainbowOutput:
-        latent = self.encode(x).reshape(x.shape[0] if x.ndim == 4 else 1, -1)
-        hidden = F.relu(self.projection(latent, eval_mode=eval_mode))
+    def project_latent(self, latent: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+        return self.projection(latent.reshape(latent.shape[0], -1), eval_mode=eval_mode)
+
+    def encode_project(self, x: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+        return self.project_latent(self.encode(x), eval_mode=eval_mode)
+
+    def spr_predict(self, latent: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+        del eval_mode
+        return self.predictor(self.project_latent(latent))
+
+    def rollout(self, latent: torch.Tensor, actions: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+        del eval_mode
+        predictions = []
+        current = latent
+        for t in range(actions.shape[1]):
+            current = self.transition_model(current, actions[:, t])
+            predictions.append(self.spr_predict(current))
+        return torch.stack(predictions, dim=1) if predictions else torch.empty(
+            latent.shape[0], 0, self.predictor.out_features, device=latent.device
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        support: torch.Tensor,
+        *,
+        actions: torch.Tensor | None = None,
+        do_rollout: bool = False,
+        eval_mode: bool = False,
+    ) -> RainbowOutput:
+        latent_map = self.encode(x)
+        hidden = F.relu(self.project_latent(latent_map, eval_mode=eval_mode))
         logits = self.head(hidden, eval_mode=eval_mode)
         if self.distributional:
             probabilities = F.softmax(logits, dim=-1)
@@ -200,4 +262,7 @@ class RainbowDQNNetwork(nn.Module):
         else:
             probabilities = torch.ones_like(logits) / logits.shape[-1]
             q_values = logits.squeeze(-1)
-        return RainbowOutput(q_values=q_values, logits=logits, probabilities=probabilities)
+        latent = None
+        if do_rollout and actions is not None:
+            latent = self.rollout(latent_map, actions, eval_mode=eval_mode)
+        return RainbowOutput(q_values=q_values, logits=logits, probabilities=probabilities, latent=latent)
