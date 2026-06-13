@@ -112,11 +112,14 @@ def _batch_metrics(batch: TensorDict) -> dict[str, float]:
     action_value = flat.get("action_value", default=None)
     action = flat.get("action", default=None)
     if action_value is not None and action is not None:
-        if action.dim() == action_value.dim():
+        action_value = action_value.reshape(-1, action_value.shape[-1])
+        if action.shape[-1:] == action_value.shape[-1:] and action.numel() == action_value.numel():
+            action = action.reshape_as(action_value)
             out["train/q_values"] = (
                 (action_value * action).sum().item() / flat.numel()
             )
         else:
+            action = action.reshape(-1)
             out["train/q_values"] = (
                 action_value.gather(-1, action.long().unsqueeze(-1))
                 .mean()

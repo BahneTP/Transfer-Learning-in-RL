@@ -12,3 +12,9 @@ The reinforcement learning implementations used in this project are adapted from
 |----------|--------|
 | SAC-BBF | [SAC-BBF-pytorch](https://github.com/BahneTP/SAC-BBF-pytorch/tree/945afa88d3dd5ceaadce6f2a61a897288912153f) |
 | Rainbow | [Kaixhin/Rainbow](https://github.com/Kaixhin/Rainbow) |
+
+## Implemented Algorithms
+
+| Algorithm | Environment | Config |
+|----------|-------------|--------|
+| DER Atari 100K | ALE/Qbert-v5 | `experiment=der/qbert_atari100k` |

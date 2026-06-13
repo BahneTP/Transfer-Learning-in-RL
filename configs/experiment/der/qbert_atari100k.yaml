@@ -1,0 +1,16 @@
+# @package _global_
+# Data-Efficient Rainbow on Atari 100K Qbert.
+defaults:
+  - override /algorithm: der_atari100k
+  - override /environment: qbert_atari100k_train
+  - override /environment@eval_environment: qbert_atari100k_eval
+  - override /logger: tensorboard
+  - _self_
+
+trainer:
+  total_frames: 100_000
+  seed: 1
+  accelerator: gpu
+  devices: [0]
+  num_envs: 1
+  log_every_n_steps: 1_000
