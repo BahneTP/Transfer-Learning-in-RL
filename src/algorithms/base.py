@@ -85,7 +85,7 @@ class BaseAlgorithm(ABC):
         path.parent.mkdir(parents=True, exist_ok=True)
         state = self._get_training_state()
         state.step = step
-        torch.save(state, path)
+        torch.save(state, path, pickle_protocol=4)
 
     def load_checkpoint(self, path: Path) -> int:
         state: TrainingState = torch.load(
