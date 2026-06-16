@@ -3,9 +3,9 @@
 This package contains Atari 100K agents ported from the standalone PyTorch BBF
 implementation used in this thesis project.
 
-## DER
+## Rainbow
 
-`DERAtari100KAlgorithm` implements Data-Efficient Rainbow with:
+`RainbowAtari100KAlgorithm` implements Atari 100K Rainbow with:
 
 - C51 categorical value distribution with 51 atoms.
 - Double DQN targets.
@@ -27,14 +27,14 @@ The Atari 100K configs use:
 - `NoopResetEnv(noops=30, random=True)`.
 - `EndOfLifeTransform` during training.
 - No `EndOfLifeTransform` during evaluation.
-- No reward clipping in the Atari 100K DER/BBF-style configs.
+- No reward clipping in the Atari 100K Rainbow/BBF-style configs.
 - No `VecNorm`, to keep pixel observations aligned with the standalone port.
 
 ## Current Status
 
 Implemented:
 
-- `DERAtari100KAlgorithm`
+- `RainbowAtari100KAlgorithm`
 
 Planned follow-up branches:
 

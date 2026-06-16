@@ -1,8 +1,8 @@
-name: Qbert
+name: BattleZone
 gym_backend: atari100k
 gym_kwargs:
   seed: ${trainer.seed}
-  terminal_on_life_loss: true
+  terminal_on_life_loss: false
   noop_max: 30
   frame_skip: 4
   stack_size: 4

@@ -1,5 +1,5 @@
 """Atari 100K value-based algorithms."""
 
-from src.algorithms.atari100k.der import DERAtari100KAlgorithm
+from src.algorithms.atari100k.rainbow import RainbowAtari100KAlgorithm
 
-__all__ = ["DERAtari100KAlgorithm"]
+__all__ = ["RainbowAtari100KAlgorithm"]

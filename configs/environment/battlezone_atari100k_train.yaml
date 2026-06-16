@@ -1,4 +1,4 @@
-name: Qbert
+name: BattleZone
 gym_backend: atari100k
 gym_kwargs:
   seed: ${trainer.seed}

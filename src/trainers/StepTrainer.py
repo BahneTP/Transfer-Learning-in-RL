@@ -62,6 +62,7 @@ class StepTrainer(BaseTrainer):
 
             step_start = time.perf_counter()
             metrics = self.algorithm.step(batch)
+            self.collector.update_policy_weights_()
             step_time = time.perf_counter() - step_start
 
             if self._should_log(log_every, batch_frames):

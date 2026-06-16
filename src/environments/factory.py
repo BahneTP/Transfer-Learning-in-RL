@@ -74,8 +74,21 @@ def _make_gymnasium_env(
     gym_kwargs: dict | None = None,
     gym_backend: str | None = None,
 ):
-    from torchrl.envs import GymEnv, TransformedEnv
+    from torchrl.envs import GymEnv, GymWrapper, TransformedEnv
     from torchrl.envs.transforms import Compose
+
+    if gym_backend == "atari100k":
+        from src.environments.atari100k import Atari100KEnv
+
+        base_env = GymWrapper(
+            Atari100KEnv(name, **(gym_kwargs or {})),
+            device=device,
+            categorical_action_encoding=True,
+        )
+        if not transforms:
+            return base_env
+        transform_objects = [_instantiate_transform(t) for t in transforms]
+        return TransformedEnv(base_env, Compose(*transform_objects))
 
     backend_ctx = nullcontext()
     if gym_backend is not None:

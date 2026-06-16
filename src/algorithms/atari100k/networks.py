@@ -49,12 +49,20 @@ def preprocess_observation(x: torch.Tensor) -> torch.Tensor:
 
 
 class NoisyLinear(nn.Module):
-    """Factorized Gaussian noisy linear layer."""
+    """Gaussian noisy linear layer matching the Atari100K Rainbow defaults."""
 
-    def __init__(self, in_features: int, out_features: int, std_init: float = 0.5) -> None:
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        std_init: float = 0.5,
+        *,
+        factorized_sigma: bool = False,
+    ) -> None:
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
+        self.factorized_sigma = factorized_sigma
         self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
         self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
         self.bias_mu = nn.Parameter(torch.empty(out_features))
@@ -87,9 +95,16 @@ class NoisyLinear(nn.Module):
             weight = self.weight_mu
             bias = self.bias_mu
         else:
-            self.reset_noise()
-            weight = self.weight_mu + self.weight_sigma * self.weight_epsilon
-            bias = self.bias_mu + self.bias_sigma * self.bias_epsilon
+            if self.factorized_sigma:
+                epsilon_in = self._scale_noise(self.in_features)
+                epsilon_out = self._scale_noise(self.out_features)
+                weight_epsilon = epsilon_out.outer(epsilon_in)
+                bias_epsilon = epsilon_out
+            else:
+                weight_epsilon = torch.randn_like(self.weight_mu)
+                bias_epsilon = torch.randn_like(self.bias_mu)
+            weight = self.weight_mu + self.weight_sigma * weight_epsilon
+            bias = self.bias_mu + self.bias_sigma * bias_epsilon
         return F.linear(x, weight, bias)
 
 
@@ -154,7 +169,7 @@ class RainbowCNN(nn.Module):
 
 
 class RainbowDQNNetwork(nn.Module):
-    """Rainbow/DER convolutional C51 network."""
+    """Rainbow convolutional C51 network."""
 
     def __init__(
         self,
@@ -172,7 +187,7 @@ class RainbowDQNNetwork(nn.Module):
     ) -> None:
         super().__init__()
         if encoder_type != "dqn":
-            raise NotImplementedError("DER currently uses the DQN/Rainbow encoder.")
+            raise NotImplementedError("Atari 100K Rainbow currently uses the DQN/Rainbow encoder.")
         self.num_actions = num_actions
         self.num_atoms = num_atoms
         self.distributional = distributional

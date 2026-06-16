@@ -1,4 +1,4 @@
-"""Data-Efficient Rainbow (DER) for Atari 100K."""
+"""Rainbow for Atari 100K."""
 
 from __future__ import annotations
 
@@ -18,17 +18,22 @@ from src.algorithms.atari100k.rl import linearly_decaying_epsilon
 from src.algorithms.base import BaseAlgorithm, CollectorConfig, TrainingState
 
 
-class _DERPolicy(nn.Module):
-    def __init__(self, algorithm: "DERAtari100KAlgorithm", *, eval_mode: bool) -> None:
+class _RainbowPolicy(nn.Module):
+    def __init__(self, algorithm: "RainbowAtari100KAlgorithm", *, eval_mode: bool) -> None:
         super().__init__()
         self.algorithm = algorithm
         self.eval_mode = eval_mode
 
     def forward(self, observation: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         with torch.no_grad():
-            network = self.algorithm.target_network if self.eval_mode else self.algorithm.online_network
+            network = self.algorithm.online_network
+            noisy_eval_mode = self.eval_mode and not self.algorithm.eval_noise
             network.eval() if self.eval_mode else network.train()
-            output = network(observation.to(self.algorithm.device), self.algorithm.support, eval_mode=self.eval_mode)
+            output = network(
+                observation.to(self.algorithm.device),
+                self.algorithm.support,
+                eval_mode=noisy_eval_mode,
+            )
             q_values = output.q_values
             if self.eval_mode:
                 epsilon = self.algorithm.epsilon_eval
@@ -52,8 +57,8 @@ class _DERPolicy(nn.Module):
         return q_values, actions
 
 
-class DERAtari100KAlgorithm(BaseAlgorithm):
-    """DER with C51, double DQN, noisy/dueling heads and prioritized n-step replay."""
+class RainbowAtari100KAlgorithm(BaseAlgorithm):
+    """Rainbow with C51, Double DQN, noisy/dueling heads and prioritized n-step replay."""
 
     def __init__(
         self,
@@ -81,6 +86,9 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
         noisy: bool = True,
         dueling: bool = True,
         double_dqn: bool = True,
+        eval_noise: bool = True,
+        target_eval_mode: bool = False,
+        target_update_tau: float = 1.0,
         frames_per_batch: int = 1,
         max_frames_per_traj: int = -1,
         seed: int = 1,
@@ -108,6 +116,9 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
         self.noisy = noisy
         self.dueling = dueling
         self.double_dqn = double_dqn
+        self.eval_noise = eval_noise
+        self.target_eval_mode = target_eval_mode
+        self.target_update_tau = target_update_tau
         self.frames_per_batch = frames_per_batch
         self.max_frames_per_traj = max_frames_per_traj
         self.seed = seed
@@ -158,12 +169,12 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
             seed=self.seed,
         )
         self._policy = TensorDictModule(
-            _DERPolicy(self, eval_mode=True),
+            _RainbowPolicy(self, eval_mode=True),
             in_keys=[self.obs_key],
             out_keys=["action_value", "action"],
         )
         self._explore_policy = TensorDictModule(
-            _DERPolicy(self, eval_mode=False),
+            _RainbowPolicy(self, eval_mode=False),
             in_keys=[self.obs_key],
             out_keys=["action_value", "action"],
         )
@@ -185,7 +196,11 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
             self.min_replay_history,
             self.epsilon_train,
         )
-        if len(self.replay) < self.min_replay_history:
+        min_sample_history = max(
+            self.min_replay_history,
+            self.replay.stack_size + self.replay.update_horizon + 1,
+        )
+        if len(self.replay) < min_sample_history:
             return {"train/epsilon": float(epsilon), "train/replay_size": float(len(self.replay))}
 
         updates = max(1, int(self.replay_ratio * flat.numel() // self.batch_size))
@@ -211,8 +226,12 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
     def _train_one_update(self) -> dict[str, torch.Tensor]:
         sample = self.replay.sample(self.batch_size, self.device)
         with torch.no_grad():
-            next_online = self.online_network(sample.next_states, self.support, eval_mode=True)
-            next_target = self.target_network(sample.next_states, self.support, eval_mode=True)
+            next_online = self.online_network(sample.next_states, self.support, eval_mode=False)
+            next_target = self.target_network(
+                sample.next_states,
+                self.support,
+                eval_mode=self.target_eval_mode,
+            )
             target = categorical_target(
                 sample.returns,
                 sample.terminals,
@@ -242,8 +261,11 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
         next_states = batch.get(("next", self.obs_key))
         actions = batch.get("action")
         rewards = batch.get(("next", "reward")).reshape(-1)
-        dones = batch.get(("next", "done")).reshape(-1)
-        if actions.ndim > 1:
+        terminals = batch.get(("next", "end-of-life"), default=None)
+        if terminals is None:
+            terminals = batch.get(("next", "done"))
+        terminals = terminals.reshape(-1)
+        if actions.ndim > 1 and actions.shape[-1] == self.num_actions:
             actions = actions.argmax(dim=-1)
         actions = actions.reshape(-1)
         for i in range(batch.numel()):
@@ -251,13 +273,23 @@ class DERAtari100KAlgorithm(BaseAlgorithm):
                 states[i],
                 int(actions[i].item()),
                 float(rewards[i].item()),
-                bool(dones[i].item()),
+                bool(terminals[i].item()),
                 next_states[i],
             )
 
     def _maybe_update_target(self) -> None:
-        if self.gradient_steps % self.target_update_period == 0:
+        if self.gradient_steps % self.target_update_period != 0:
+            return
+        if self.target_update_tau >= 1.0:
             self.target_network.load_state_dict(self.online_network.state_dict())
+            return
+        with torch.no_grad():
+            for target_param, online_param in zip(
+                self.target_network.parameters(),
+                self.online_network.parameters(),
+            ):
+                target_param.mul_(1.0 - self.target_update_tau)
+                target_param.add_(online_param, alpha=self.target_update_tau)
 
     def _optimizer_groups(self) -> list[dict]:
         decay_params = []
