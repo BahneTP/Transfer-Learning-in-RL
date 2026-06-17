@@ -144,8 +144,6 @@ class Atari100KAlgorithm(BaseAlgorithm):
         batches_to_group: int = 1,
         eval_noise: bool = True,
         target_eval_mode: bool = False,
-        noisy_noise_mode: str = "independent", #factorized, independent
-        noisy_bias_sigma_scale: str = "output", #input, output
         spr_weight: float | None = None,
         jumps: int | None = None,
         reset_every: int | None = None,
@@ -203,8 +201,6 @@ class Atari100KAlgorithm(BaseAlgorithm):
             "batches_to_group": batches_to_group,
             "eval_noise": eval_noise,
             "target_eval_mode": target_eval_mode,
-            "noisy_noise_mode": noisy_noise_mode,
-            "noisy_bias_sigma_scale": noisy_bias_sigma_scale,
         }
         optional = {
             "max_update_horizon": max_update_horizon,
@@ -309,8 +305,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
         obs = _pixels_to_numpy_frames(td.get(self.obs_key))[0]
         action = _action_to_int(td.get("action"))
         reward = float(td.get(("next", "reward")).reshape(-1)[0].item())
-        done_tensor = td.get(("next", "done"), default=td.get(("next", "terminated")))
-        done = bool(done_tensor.reshape(-1)[0].item())
+        done = _terminal_from_transition(td)
         self.replay.add(
             obs[None],
             np.array([action], dtype=np.int32),
@@ -449,9 +444,26 @@ def _pixels_to_numpy_frames(pixels: torch.Tensor) -> np.ndarray:
 
 def _is_init(td: TensorDict, batch_size: int) -> np.ndarray:
     value = td.get("is_init", default=None)
+    end_of_life = td.get("end-of-life", default=None)
     if value is None:
-        return np.zeros(batch_size, dtype=bool)
-    return value.detach().cpu().reshape(-1).numpy().astype(bool)
+        out = np.zeros(batch_size, dtype=bool)
+    else:
+        out = value.detach().cpu().reshape(-1).numpy().astype(bool)
+    if end_of_life is not None:
+        out = out | end_of_life.detach().cpu().reshape(-1).numpy().astype(bool)
+    return out
+
+
+def _terminal_from_transition(td: TensorDict) -> bool:
+    end_of_life = td.get(("next", "end-of-life"), default=None)
+    if end_of_life is not None:
+        return bool(end_of_life.reshape(-1)[0].item())
+
+    for key in ("done", "terminated", "truncated"):
+        value = td.get(("next", key), default=None)
+        if value is not None and bool(value.reshape(-1)[0].item()):
+            return True
+    return False
 
 
 def _action_to_int(action: torch.Tensor) -> int:

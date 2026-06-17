@@ -1,7 +1,12 @@
 """Smoke coverage for Atari 100K DER/SPR/BBF experiment wiring."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import numpy as np
 import pytest
+import torch
+from tensordict import TensorDict
 
 from tests.conftest import load_experiment_cfg
 
@@ -58,3 +63,68 @@ def test_smoke_atari100k_der_qbert():
     metrics = _train(cfg)
     assert isinstance(metrics, dict)
     assert len(metrics) > 0
+
+
+def test_atari100k_life_loss_is_stored_as_terminal():
+    from src.algorithms.atari100k.algorithm import Atari100KAlgorithm
+
+    class ReplaySpy:
+        def __init__(self):
+            self.sum_tree = SimpleNamespace(max_recorded_priority=1.0)
+            self.terminal = None
+            self.episode_end = None
+
+        def add(
+            self,
+            observation,
+            action,
+            reward,
+            terminal,
+            *,
+            priority,
+            episode_end,
+        ):
+            self.terminal = terminal
+            self.episode_end = episode_end
+
+    algo = Atari100KAlgorithm()
+    algo.replay = ReplaySpy()
+    transition = TensorDict(
+        {
+            "pixels": torch.zeros(1, 84, 84, dtype=torch.uint8),
+            "action": torch.tensor(2),
+            "next": TensorDict(
+                {
+                    "reward": torch.tensor([0.0]),
+                    "done": torch.tensor([False]),
+                    "terminated": torch.tensor([False]),
+                    "truncated": torch.tensor([False]),
+                    "end-of-life": torch.tensor([True]),
+                },
+                batch_size=[],
+            ),
+        },
+        batch_size=[],
+    )
+
+    algo._add_transition(transition)
+
+    np.testing.assert_array_equal(algo.replay.terminal, np.array([1], dtype=np.uint8))
+    np.testing.assert_array_equal(
+        algo.replay.episode_end,
+        np.array([1], dtype=np.uint8),
+    )
+
+
+def test_atari100k_life_loss_resets_policy_stack_flag():
+    from src.algorithms.atari100k.algorithm import _is_init
+
+    td = TensorDict(
+        {
+            "is_init": torch.tensor([False, False]),
+            "end-of-life": torch.tensor([False, True]),
+        },
+        batch_size=[2],
+    )
+
+    np.testing.assert_array_equal(_is_init(td, 2), np.array([False, True]))

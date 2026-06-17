@@ -29,5 +29,3 @@ renormalize_output: false
 data_augmentation: false
 batches_to_group: 1
 target_eval_mode: false
-noisy_noise_mode: factorized #factorized, independent
-noisy_bias_sigma_scale: input #input, output

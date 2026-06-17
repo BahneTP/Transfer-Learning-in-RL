@@ -19,8 +19,6 @@ InitializerName = Literal[
     "orthogonal",
 ]
 EncoderName = Literal["dqn", "impala"]
-NoisyNoiseMode = Literal["factorized", "independent"]
-NoisySigmaScale = Literal["input", "output"]
 
 
 @dataclasses.dataclass
@@ -91,15 +89,11 @@ class NoisyLinear(nn.Module):
       out_features: int,
       *,
       std_init: float = 0.5,
-      noise_mode: NoisyNoiseMode = "factorized",
-      bias_sigma_scale: NoisySigmaScale = "input",
       initializer: InitializerName = "xavier_uniform",
   ) -> None:
     super().__init__()
     self.in_features = in_features
     self.out_features = out_features
-    self.noise_mode = noise_mode
-    self.bias_sigma_scale = bias_sigma_scale
     self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
     self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
     self.bias_mu = nn.Parameter(torch.empty(out_features))
@@ -127,8 +121,7 @@ class NoisyLinear(nn.Module):
       raise NotImplementedError(f"Unsupported initializer: {self.initializer}")
     nn.init.uniform_(self.bias_mu, -bound, bound)
     nn.init.constant_(self.weight_sigma, self.std_init / math.sqrt(self.in_features))
-    bias_scale_features = self.in_features if self.bias_sigma_scale == "input" else self.out_features
-    nn.init.constant_(self.bias_sigma, self.std_init / math.sqrt(bias_scale_features))
+    nn.init.constant_(self.bias_sigma, self.std_init / math.sqrt(self.in_features))
 
   def _scale_noise(self, size: int) -> torch.Tensor:
     x = torch.randn(size, device=self.weight_mu.device)
@@ -145,16 +138,10 @@ class NoisyLinear(nn.Module):
       weight = self.weight_mu
       bias = self.bias_mu
     else:
-      if self.noise_mode == "factorized":
-        epsilon_in = self._scale_noise(self.in_features)
-        epsilon_out = self._scale_noise(self.out_features)
-        weight_epsilon = epsilon_out.outer(epsilon_in)
-        bias_epsilon = epsilon_out
-      elif self.noise_mode == "independent":
-        weight_epsilon = torch.randn_like(self.weight_mu)
-        bias_epsilon = torch.randn_like(self.bias_mu)
-      else:
-        raise NotImplementedError(f"Unsupported noisy noise mode: {self.noise_mode}")
+      epsilon_in = self._scale_noise(self.in_features)
+      epsilon_out = self._scale_noise(self.out_features)
+      weight_epsilon = epsilon_out.outer(epsilon_in)
+      bias_epsilon = epsilon_out
       weight = self.weight_mu + self.weight_sigma * weight_epsilon
       bias = self.bias_mu + self.bias_sigma * bias_epsilon
     return F.linear(x, weight, bias)
@@ -168,8 +155,6 @@ class FeatureLayer(nn.Module):
       in_features: int,
       out_features: int,
       initializer: InitializerName = "xavier_uniform",
-      noisy_noise_mode: NoisyNoiseMode = "factorized",
-      noisy_bias_sigma_scale: NoisySigmaScale = "input",
   ) -> None:
     super().__init__()
     self.noisy = noisy
@@ -179,8 +164,6 @@ class FeatureLayer(nn.Module):
           in_features,
           out_features,
           initializer=initializer,
-          noise_mode=noisy_noise_mode,
-          bias_sigma_scale=noisy_bias_sigma_scale,
       )
     else:
       self.net = nn.Linear(in_features, out_features)
@@ -202,8 +185,6 @@ class LinearHead(nn.Module):
       num_actions: int,
       num_atoms: int,
       initializer: InitializerName = "xavier_uniform",
-      noisy_noise_mode: NoisyNoiseMode = "factorized",
-      noisy_bias_sigma_scale: NoisySigmaScale = "input",
   ) -> None:
     super().__init__()
     self.dueling = dueling
@@ -214,8 +195,6 @@ class LinearHead(nn.Module):
         in_features=in_features,
         out_features=num_actions * num_atoms,
         initializer=initializer,
-        noisy_noise_mode=noisy_noise_mode,
-        noisy_bias_sigma_scale=noisy_bias_sigma_scale,
     )
     self.value = None
     if dueling:
@@ -224,8 +203,6 @@ class LinearHead(nn.Module):
           in_features=in_features,
           out_features=num_atoms,
           initializer=initializer,
-          noisy_noise_mode=noisy_noise_mode,
-          noisy_bias_sigma_scale=noisy_bias_sigma_scale,
       )
 
   def forward(self, x: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
@@ -403,8 +380,6 @@ class RainbowDQNNetwork(nn.Module):
       use_spatial_embeddings: bool = False,
       initializer: InitializerName = "xavier_uniform",
       input_channels: int = 4,
-      noisy_noise_mode: NoisyNoiseMode = "factorized",
-      noisy_bias_sigma_scale: NoisySigmaScale = "input",
   ) -> None:
     super().__init__()
     self.num_actions = num_actions
@@ -437,8 +412,6 @@ class RainbowDQNNetwork(nn.Module):
     self.dueling = dueling
     self.initializer = initializer
     self.input_channels = input_channels
-    self.noisy_noise_mode = noisy_noise_mode
-    self.noisy_bias_sigma_scale = noisy_bias_sigma_scale
     self.head: LinearHead | None = None
     self.predictor: nn.Linear | None = None
 
@@ -449,8 +422,6 @@ class RainbowDQNNetwork(nn.Module):
           in_features=representation_dim,
           out_features=self.hidden_dim,
           initializer=self.initializer,
-          noisy_noise_mode=self.noisy_noise_mode,
-          noisy_bias_sigma_scale=self.noisy_bias_sigma_scale,
       )
       self.projection_out_dim = self.hidden_dim
       self.predictor = nn.Linear(self.hidden_dim, self.hidden_dim)
@@ -462,8 +433,6 @@ class RainbowDQNNetwork(nn.Module):
           num_actions=self.num_actions,
           num_atoms=self.num_atoms,
           initializer=self.initializer,
-          noisy_noise_mode=self.noisy_noise_mode,
-          noisy_bias_sigma_scale=self.noisy_bias_sigma_scale,
       )
       self.add_module("projection_layer", self.projection)
       self.add_module("predictor_layer", self.predictor)
@@ -618,8 +587,6 @@ class SACRainbowDQNNetwork(RainbowDQNNetwork):
           in_features=representation_dim,
           out_features=self.hidden_dim,
           initializer=self.initializer,
-          noisy_noise_mode=self.noisy_noise_mode,
-          noisy_bias_sigma_scale=self.noisy_bias_sigma_scale,
       )
       self.predict_policy = nn.Linear(self.hidden_dim, self.hidden_dim)
       self.policy = nn.Linear(self.hidden_dim, self.num_actions)

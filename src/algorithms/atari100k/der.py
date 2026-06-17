@@ -50,8 +50,6 @@ class DERConfig:
   batches_to_group: int = 1
   eval_noise: bool = True
   target_eval_mode: bool = False
-  noisy_noise_mode: str = "factorized" #factorized, independent
-  noisy_bias_sigma_scale: str = "input" #input, output
   device: str = "cpu"
 
 
@@ -94,8 +92,6 @@ class DERAgent:
         width_scale=self.config.width_scale,
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
-        noisy_noise_mode=self.config.noisy_noise_mode,  # type: ignore[arg-type]
-        noisy_bias_sigma_scale=self.config.noisy_bias_sigma_scale,  # type: ignore[arg-type]
     )
 
   def _make_optimizer(self) -> torch.optim.Optimizer:
