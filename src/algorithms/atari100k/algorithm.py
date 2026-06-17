@@ -71,7 +71,18 @@ class Atari100KPolicy(nn.Module):
             states.append(np.stack(list(self._frames[i]), axis=-1))
 
         state = np.stack(states, axis=0)
-        actions = self.agent.select_action(state, eval_mode=self.eval_mode).reshape(-1)
+        if (
+            not self.eval_mode
+            and self.agent.training_steps < int(self.agent.config.min_replay_history)
+        ):
+            actions = torch.randint(
+                self.agent.config.num_actions,
+                (batch_size,),
+                generator=self.agent.generator,
+                device=self.agent.device,
+            )
+        else:
+            actions = self.agent.select_action(state, eval_mode=self.eval_mode).reshape(-1)
         if self.one_hot_actions:
             actions = F.one_hot(
                 actions.long(),
@@ -269,7 +280,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
     def get_collector_config(self) -> CollectorConfig:
         return CollectorConfig(
             frames_per_batch=self.frames_per_batch,
-            init_random_frames=int(self.agent.config.min_replay_history),
+            init_random_frames=0,
             max_frames_per_traj=self.max_frames_per_traj,
         )
 

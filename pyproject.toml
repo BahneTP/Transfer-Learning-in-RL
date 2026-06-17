@@ -17,6 +17,7 @@ dependencies = [
     "gymnasium[classic-control,mujoco]>=0.29.0",
     "ale-py>=0.9.0",
     "autorom[accept-rom-license]>=0.6.1",
+    "opencv-python-headless>=4.10.0",
     "torchvision>=0.18.0",  # Atari pixel transforms (Resize)
     # Logging
     "wandb>=0.17.0",

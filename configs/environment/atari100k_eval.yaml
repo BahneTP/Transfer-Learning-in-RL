@@ -18,7 +18,7 @@ transforms:
     pixel_key: pixels
   - _target_: torchrl.envs.ToTensorImage
   - _target_: torchrl.envs.GrayScale
-  - _target_: torchrl.envs.Resize
+  - _target_: src.environments.transforms.OpenCVResizeTransform
     w: 84
     h: 84
   - _target_: torchrl.envs.RewardSum
