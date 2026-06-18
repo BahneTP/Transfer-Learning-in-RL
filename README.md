@@ -31,3 +31,17 @@ python src/train.py experiment=atari100k/bbf/battlezone
 python src/train.py experiment=atari100k/sac_bbf/qbert
 python src/train.py experiment=atari100k/sac_bbf/battlezone
 ```
+
+## Logging note
+
+For Atari training runs that learn on clipped rewards, the training environment
+can preserve a second, unclipped reward track for logging. In that setup:
+
+- `train/raw_reward` reports the raw training score
+- `train/clip_reward` reports the clipped reward used for learning
+
+Available Atari environment configs now include:
+
+- `pong_train` / `pong_eval`
+- `qbert_train` / `qbert_eval`
+- `battlezone_train` / `battlezone_eval`

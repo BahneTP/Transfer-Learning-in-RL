@@ -1,0 +1,17 @@
+# @package _global_
+# DQN on Atari BattleZone — mirrors the torchrl SOTA Atari reference with the
+# project-specific train/eval environment split.
+defaults:
+  - override /algorithm: dqn_atari
+  - override /environment: battlezone_train
+  - override /environment@eval_environment: battlezone_eval
+  - override /logger: wandb
+  - _self_
+
+trainer:
+  total_frames: 40_000_100
+  seed: 42
+  accelerator: gpu
+  devices: [3]
+  num_envs: 16
+  log_every_n_steps: 10_000

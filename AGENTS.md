@@ -28,6 +28,12 @@ Implemented experiments:
 
 Other algorithms will follow.
 
+Available Atari environment config pairs:
+
+- `pong_train` / `pong_eval`
+- `qbert_train` / `qbert_eval`
+- `battlezone_train` / `battlezone_eval`
+
 ## Design principles
 
 1. **Readable algorithm code.** Each algorithm file should read close to the
@@ -160,7 +166,7 @@ def step(self, batch: TensorDict) -> dict[str, float]:
 ```
 
 The trainer never touches the replay buffer, target network or epsilon — those are
-algorithm internals. Per-batch metrics (`train/episode_reward`,
+algorithm internals. Per-batch metrics (`train/raw_reward`,
 `train/episode_length`, `train/q_values`) and timing (`time/collect`,
 `time/step`, `time/speed`) are computed by `StepTrainer` from the collector
 batch and merged into the algorithm's metrics dict at logging boundaries.
@@ -209,8 +215,13 @@ constructor defaults.
 - `transforms`: list of `_target_`-keyed dicts, each instantiated as a
   `torchrl.envs.transforms` object and composed on top of the base env.
   Always include `StepCounter` explicitly. Add `RewardSum` if you want
-  `train/episode_reward` in the trainer metrics — it populates the
+  `train/raw_reward` in the trainer metrics — it populates the
   `("next", "episode_reward")` key the trainer reads.
+  If training uses reward clipping but you still want the unclipped training
+  score in logs, snapshot the reward to a second key before `SignTransform`
+  and add a second `RewardSum` for that key. `StepTrainer` will then log
+  `train/raw_reward` from `("next", "raw_episode_reward")` and keep the
+  clipped metric under `train/clip_reward`.
 - `gym_kwargs`: optional dict forwarded straight to `GymEnv` (e.g.
   `{"frame_skip": 4, "from_pixels": true, "pixels_only": false,
   "categorical_action_encoding": true}` for Atari).
