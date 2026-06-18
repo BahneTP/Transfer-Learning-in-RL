@@ -9,10 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 case "${ALGO}" in
-  der|spr|bbf) ;;
+  der|spr|sr_spr|bbf|sac_bbf) ;;
   *)
     echo "Unsupported algorithm: ${ALGO}" >&2
-    echo "Usage: $0 [der|spr|bbf] [gpu_id] [start_seed]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [gpu_id] [start_seed]" >&2
     exit 2
     ;;
 esac

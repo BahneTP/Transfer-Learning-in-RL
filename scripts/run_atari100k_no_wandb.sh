@@ -10,10 +10,10 @@ cd "$(dirname "$0")/.."
 RUN_ROOT="${5:-${PWD}/logs}"
 
 case "${ALGO}" in
-  der|spr|bbf) ;;
+  der|spr|sr_spr|bbf|sac_bbf) ;;
   *)
     echo "Unsupported algorithm: ${ALGO}" >&2
-    echo "Usage: $0 [der|spr|bbf] [qbert|battlezone] [gpu_id] [seed] [run_root]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [qbert|battlezone] [gpu_id] [seed] [run_root]" >&2
     exit 2
     ;;
 esac
@@ -22,7 +22,7 @@ case "${GAME}" in
   qbert|battlezone) ;;
   *)
     echo "Unsupported game: ${GAME}" >&2
-    echo "Usage: $0 [der|spr|bbf] [qbert|battlezone] [gpu_id] [seed] [run_root]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [qbert|battlezone] [gpu_id] [seed] [run_root]" >&2
     exit 2
     ;;
 esac

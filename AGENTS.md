@@ -19,8 +19,12 @@ Implemented experiments:
 | DER       | ALE/BattleZone-v5 | `experiment=atari100k/der/battlezone` |
 | SPR       | ALE/Qbert-v5   | `experiment=atari100k/spr/qbert` |
 | SPR       | ALE/BattleZone-v5 | `experiment=atari100k/spr/battlezone` |
+| SR-SPR    | ALE/Qbert-v5   | `experiment=atari100k/sr_spr/qbert` |
+| SR-SPR    | ALE/BattleZone-v5 | `experiment=atari100k/sr_spr/battlezone` |
 | BBF       | ALE/Qbert-v5   | `experiment=atari100k/bbf/qbert` |
 | BBF       | ALE/BattleZone-v5 | `experiment=atari100k/bbf/battlezone` |
+| SAC-BBF   | ALE/Qbert-v5   | `experiment=atari100k/sac_bbf/qbert` |
+| SAC-BBF   | ALE/BattleZone-v5 | `experiment=atari100k/sac_bbf/battlezone` |
 
 Other algorithms will follow.
 
@@ -298,8 +302,8 @@ src/
       a2c.py                — A2CAlgorithm; on-policy actor/critic with GAE + A2CLoss
       README.md             — theory, pseudocode, W&B benchmark table
     atari100k/
-      algorithm.py          — TorchRL/Hydra adapter for DER, SPR, and BBF
-      der.py, spr.py, bbf.py — hard-ported BBF-pytorch agent cores
+      algorithm.py          — TorchRL/Hydra adapter for Atari 100K agents
+      der.py, spr.py, bbf.py, sac_bbf.py — hard-ported BBF-pytorch agent cores
       networks.py           — Rainbow/SPR/BBF network blocks and NoisyLinear
       replay.py, sum_tree.py — Atari 100K n-step prioritized replay
       rl.py                 — C51 projection, epsilon schedule, action selection
@@ -319,7 +323,9 @@ configs/
   algorithm/a2c.yaml        — A2C HPs (HalfCheetah/MuJoCo defaults); _partial_ actor/value
   algorithm/atari100k_der.yaml — DER Atari 100K HPs ported from BBF-pytorch
   algorithm/atari100k_spr.yaml — SPR Atari 100K HPs ported from BBF-pytorch
+  algorithm/atari100k_sr_spr.yaml — SR-SPR Atari 100K HPs ported from BBF-pytorch
   algorithm/atari100k_bbf.yaml — BBF Atari 100K HPs ported from BBF-pytorch
+  algorithm/atari100k_sac_bbf.yaml — SAC-BBF Atari 100K HPs ported from BBF-pytorch
   environment/cartpole.yaml — env kwargs (name, transforms)
   environment/pong_train.yaml — Atari Pong env (training transforms incl. EndOfLife + Sign + VecNorm)
   environment/pong_eval.yaml  — Atari Pong env (eval transforms; drops EndOfLife + Sign + VecNorm)

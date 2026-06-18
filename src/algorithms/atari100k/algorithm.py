@@ -7,6 +7,7 @@ NumPy-backed replay/agent API used by those agents.
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Type
 
 import numpy as np
@@ -20,12 +21,13 @@ from torchrl.envs import EnvBase
 from src.algorithms.atari100k.bbf import BBFAgent, BBFConfig
 from src.algorithms.atari100k.der import DERAgent, DERConfig
 from src.algorithms.atari100k.replay import PrioritizedSubsequenceReplayBuffer
-from src.algorithms.atari100k.spr import SPRAgent, SPRConfig
+from src.algorithms.atari100k.sac_bbf import SACBBFAgent, SACBBFConfig
+from src.algorithms.atari100k.spr import SRSPRAgent, SRSPRConfig, SPRAgent, SPRConfig
 from src.algorithms.base import BaseAlgorithm, CollectorConfig, TrainingState
 
 
-ConfigT = DERConfig | SPRConfig | BBFConfig
-AgentT = DERAgent | SPRAgent | BBFAgent
+ConfigT = DERConfig | SPRConfig | SRSPRConfig | BBFConfig | SACBBFConfig
+AgentT = DERAgent | SPRAgent | SRSPRAgent | BBFAgent | SACBBFAgent
 
 
 class Atari100KPolicy(nn.Module):
@@ -99,6 +101,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
 
     agent_cls: Type[AgentT] = DERAgent
     config_cls: Type[ConfigT] = DERConfig
+    prefetch_fixed_replay = False
 
     def __init__(
         self,
@@ -162,6 +165,11 @@ class Atari100KAlgorithm(BaseAlgorithm):
         reset_target: bool | None = None,
         target_action_selection: bool | None = None,
         match_online_target_rngs: bool | None = None,
+        entropy_decay_period: int | None = None,
+        entropy_initial_coef: float | None = None,
+        entropy_final_coef: float | None = None,
+        policy_learning_rate: float | None = None,
+        alpha_learning_rate: float | None = None,
     ) -> None:
         super().__init__(device)
         self.obs_key = obs_key
@@ -225,11 +233,18 @@ class Atari100KAlgorithm(BaseAlgorithm):
             "reset_target": reset_target,
             "target_action_selection": target_action_selection,
             "match_online_target_rngs": match_online_target_rngs,
+            "entropy_decay_period": entropy_decay_period,
+            "entropy_initial_coef": entropy_initial_coef,
+            "entropy_final_coef": entropy_final_coef,
+            "policy_learning_rate": policy_learning_rate,
+            "alpha_learning_rate": alpha_learning_rate,
         }
         self._config_kwargs.update(
             {key: value for key, value in optional.items() if value is not None}
         )
         self._collected_frames = 0
+        self._sample_executor: ThreadPoolExecutor | None = None
+        self._prefetched_sample: Future[dict[str, Any]] | None = None
 
     def setup(self, make_env: Callable[[], EnvBase]) -> None:
         proof_env = make_env()
@@ -290,6 +305,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
             if self._collected_frames > int(self.agent.config.min_replay_history):
                 self.agent.training_steps = self._collected_frames
                 all_metrics.append(self._train_step_updates())
+                self._finish_replay_prefetch_before_add()
             self._add_transition(transition)
             self._collected_frames += 1
             self.agent.training_steps = self._collected_frames
@@ -323,13 +339,15 @@ class Atari100KAlgorithm(BaseAlgorithm):
 
     def _train_step_updates(self) -> dict[str, Any]:
         all_metrics: list[dict[str, Any]] = []
+        prefetch_enabled = self._can_prefetch_replay()
         for _ in range(self._update_groups_per_train_step()):
-            batch = self.replay.sample_transition_batch(
-                batch_size=self._current_sample_batch_size(),
-                update_horizon=self._current_sample_update_horizon(),
-                gamma=self._current_sample_gamma(),
-                as_torch=False,
+            batch = (
+                self._take_replay_sample()
+                if prefetch_enabled
+                else self._sample_replay_batch()
             )
+            if prefetch_enabled:
+                self._start_replay_prefetch()
             metrics = self.agent.train_step(batch)
             if getattr(self.agent, "reset_priorities_requested", False):
                 self.replay.reset_priorities()
@@ -337,6 +355,47 @@ class Atari100KAlgorithm(BaseAlgorithm):
             self.replay.set_priority(batch["indices"], metrics["priorities"])
             all_metrics.append(metrics)
         return _merge_metrics(all_metrics, prefix="")
+
+    def _can_prefetch_replay(self) -> bool:
+        """Overlap fixed-schedule SPR replay sampling with GPU training."""
+        return (
+            self.device.type == "cuda"
+            and self.prefetch_fixed_replay
+        )
+
+    def _replay_sample_kwargs(self) -> dict[str, Any]:
+        return {
+            "batch_size": self._current_sample_batch_size(),
+            "update_horizon": self._current_sample_update_horizon(),
+            "gamma": self._current_sample_gamma(),
+            "as_torch": False,
+        }
+
+    def _sample_replay_batch(self) -> dict[str, Any]:
+        return self.replay.sample_transition_batch(**self._replay_sample_kwargs())
+
+    def _ensure_sample_executor(self) -> ThreadPoolExecutor:
+        if self._sample_executor is None:
+            self._sample_executor = ThreadPoolExecutor(max_workers=1)
+        return self._sample_executor
+
+    def _start_replay_prefetch(self) -> None:
+        if self._prefetched_sample is not None:
+            return
+        self._prefetched_sample = self._ensure_sample_executor().submit(
+            self._sample_replay_batch
+        )
+
+    def _take_replay_sample(self) -> dict[str, Any]:
+        if self._prefetched_sample is None:
+            return self._sample_replay_batch()
+        future = self._prefetched_sample
+        self._prefetched_sample = None
+        return future.result()
+
+    def _finish_replay_prefetch_before_add(self) -> None:
+        if self._prefetched_sample is not None:
+            self._prefetched_sample.result()
 
     def _updates_per_train_step(self) -> int:
         replay_ratio = int(self.agent.config.replay_ratio)
@@ -417,11 +476,22 @@ class DERAlgorithm(Atari100KAlgorithm):
 class SPRAlgorithm(Atari100KAlgorithm):
     agent_cls = SPRAgent
     config_cls = SPRConfig
+    prefetch_fixed_replay = True
+
+
+class SRSPRAlgorithm(Atari100KAlgorithm):
+    agent_cls = SRSPRAgent
+    config_cls = SRSPRConfig
 
 
 class BBFAlgorithm(Atari100KAlgorithm):
     agent_cls = BBFAgent
     config_cls = BBFConfig
+
+
+class SACBBFAlgorithm(Atari100KAlgorithm):
+    agent_cls = SACBBFAgent
+    config_cls = SACBBFConfig
 
 
 def _pixels_to_numpy_frames(pixels: torch.Tensor) -> np.ndarray:
