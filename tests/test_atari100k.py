@@ -38,6 +38,7 @@ def test_atari100k_experiment_configs_compose(experiment: str):
     assert cfg.environment.name.startswith("ALE/")
     assert cfg.trainer.total_frames == 100_000
     assert cfg.algorithm.obs_key == "pixels"
+    assert cfg.algorithm.seed == cfg.trainer.seed
 
 
 def test_smoke_atari100k_der_qbert():
@@ -128,3 +129,59 @@ def test_atari100k_life_loss_resets_policy_stack_flag():
     )
 
     np.testing.assert_array_equal(_is_init(td, 2), np.array([False, True]))
+
+
+def test_episodic_life_reset_advances_without_resetting_game():
+    import gymnasium as gym
+
+    from src.environments.atari_wrappers import EpisodicLifeEnv
+
+    class FakeAle:
+        def __init__(self):
+            self.current_lives = 3
+
+        def lives(self):
+            return self.current_lives
+
+    class FakeEnv(gym.Env):
+        action_space = gym.spaces.Discrete(3)
+        observation_space = gym.spaces.Box(0, 255, (1,), dtype=np.uint8)
+        metadata = {}
+        render_mode = None
+
+        def __init__(self):
+            self.ale = FakeAle()
+            self.reset_calls = 0
+            self.actions = []
+
+        @property
+        def unwrapped(self):
+            return self
+
+        def reset(self, *, seed=None, options=None):
+            self.reset_calls += 1
+            return np.array([10], dtype=np.uint8), {}
+
+        def step(self, action):
+            self.actions.append(action)
+            return np.array([20], dtype=np.uint8), 0.0, False, False, {}
+
+    base = FakeEnv()
+    env = EpisodicLifeEnv(base)
+    env.reset()
+    base.ale.current_lives = 2
+    _, _, terminated, _, _ = env.step(1)
+    assert terminated
+
+    observation, _ = env.reset()
+
+    assert base.reset_calls == 1
+    assert base.actions == [1, 0]
+    np.testing.assert_array_equal(observation, np.array([20], dtype=np.uint8))
+
+
+def test_atari_algorithm_seed_controls_agent_and_replay():
+    from src.algorithms.atari100k.algorithm import Atari100KAlgorithm
+
+    algo = Atari100KAlgorithm(seed=123)
+    assert algo.seed == 123

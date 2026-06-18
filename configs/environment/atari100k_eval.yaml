@@ -7,15 +7,13 @@ gym_kwargs:
   from_pixels: true
   pixels_only: false
   categorical_action_encoding: false
+atari_preprocessing:
+  noop_max: 30
+  frame_skip: 4
+  terminal_on_life_loss: false
 
 # Evaluation keeps true game-over episodes and unclipped rewards.
 transforms:
-  - _target_: torchrl.envs.NoopResetEnv
-    noops: 30
-    random: true
-  - _target_: src.environments.transforms.MaxAndSkipTransform
-    frame_skip: 4
-    pixel_key: pixels
   - _target_: torchrl.envs.ToTensorImage
   - _target_: torchrl.envs.GrayScale
   - _target_: torchrl.envs.Resize

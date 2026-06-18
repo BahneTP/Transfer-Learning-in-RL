@@ -7,18 +7,15 @@ gym_kwargs:
   from_pixels: true
   pixels_only: false
   categorical_action_encoding: false
+atari_preprocessing:
+  noop_max: 30
+  frame_skip: 4
+  terminal_on_life_loss: true
 
-# Atari 100K preprocessing follows the BBF-pytorch runner: random no-ops,
-# action repeat of 4, life-loss terminals for training, 84x84 grayscale frames.
+# Atari 100K preprocessing uses random no-ops, action repeat of 4,
+# life-loss terminals for training, and 84x84 grayscale frames.
 # Frame stacking is intentionally owned by the Atari100K algorithm/replay.
 transforms:
-  - _target_: torchrl.envs.NoopResetEnv
-    noops: 30
-    random: true
-  - _target_: src.environments.transforms.MaxAndSkipTransform
-    frame_skip: 4
-    pixel_key: pixels
-  - _target_: torchrl.envs.EndOfLifeTransform
   - _target_: torchrl.envs.ToTensorImage
   - _target_: torchrl.envs.GrayScale
   - _target_: torchrl.envs.Resize

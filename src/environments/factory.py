@@ -23,6 +23,7 @@ def make_env(
     transforms: list | None = None,
     gym_kwargs: dict | None = None,
     gym_backend: str | None = None,
+    atari_preprocessing: dict | None = None,
     **_: object,
 ):
     """Build a (possibly vectorised) ``TransformedEnv`` for a gymnasium env.
@@ -49,6 +50,7 @@ def make_env(
         device=worker_device,
         gym_kwargs=gym_kwargs,
         gym_backend=gym_backend,
+        atari_preprocessing=atari_preprocessing,
     )
 
     if num_envs > 1:
@@ -73,8 +75,9 @@ def _make_gymnasium_env(
     device: str,
     gym_kwargs: dict | None = None,
     gym_backend: str | None = None,
+    atari_preprocessing: dict | None = None,
 ):
-    from torchrl.envs import GymEnv, TransformedEnv
+    from torchrl.envs import GymEnv, GymWrapper, TransformedEnv
     from torchrl.envs.transforms import Compose
 
     backend_ctx = nullcontext()
@@ -83,7 +86,31 @@ def _make_gymnasium_env(
         backend_ctx = set_gym_backend(gym_backend)
 
     with backend_ctx:
-        base_env = GymEnv(name, device=device, **(gym_kwargs or {}))
+        if atari_preprocessing is None:
+            base_env = GymEnv(name, device=device, **(gym_kwargs or {}))
+        else:
+            import ale_py
+            import gymnasium as gym
+
+            from src.environments.atari_wrappers import wrap_atari
+
+            if hasattr(gym, "register_envs"):
+                gym.register_envs(ale_py)
+            kwargs = dict(gym_kwargs or {})
+            from_pixels = bool(kwargs.pop("from_pixels", False))
+            pixels_only = bool(kwargs.pop("pixels_only", False))
+            categorical = bool(kwargs.pop("categorical_action_encoding", False))
+            if from_pixels:
+                kwargs.setdefault("render_mode", "rgb_array")
+            raw_env = gym.make(name, **kwargs)
+            raw_env = wrap_atari(raw_env, **dict(atari_preprocessing))
+            base_env = GymWrapper(
+                raw_env,
+                device=device,
+                from_pixels=from_pixels,
+                pixels_only=pixels_only,
+                categorical_action_encoding=categorical,
+            )
 
     if not transforms:
         return base_env

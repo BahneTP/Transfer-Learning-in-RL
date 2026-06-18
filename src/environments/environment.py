@@ -30,6 +30,7 @@ class Environment:
         transforms: list | None = None,
         gym_kwargs: dict | None = None,
         gym_backend: str | None = None,
+        atari_preprocessing: dict | None = None,
         **_: object,
     ) -> None:
         self._factory_kwargs: dict = {
@@ -37,6 +38,7 @@ class Environment:
             "transforms": transforms,
             "gym_kwargs": gym_kwargs,
             "gym_backend": gym_backend,
+            "atari_preprocessing": atari_preprocessing,
         }
 
     def make_env(self, num_envs: int = 1, device: str = "cpu") -> EnvBase:
