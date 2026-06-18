@@ -39,6 +39,9 @@ class CollectorConfig:
     frames_per_batch: int
     init_random_frames: int = 0
     max_frames_per_traj: int = -1  # -1 = no limit
+    env_device: str | None = None
+    policy_device: str | None = None
+    storing_device: str | None = None
 
 
 class BaseAlgorithm(ABC):

@@ -185,3 +185,13 @@ def test_atari_algorithm_seed_controls_agent_and_replay():
 
     algo = Atari100KAlgorithm(seed=123)
     assert algo.seed == 123
+
+
+def test_atari_collector_keeps_environment_and_storage_on_cpu():
+    from src.algorithms.atari100k.algorithm import Atari100KAlgorithm
+
+    collector_cfg = Atari100KAlgorithm().get_collector_config()
+
+    assert collector_cfg.env_device == "cpu"
+    assert collector_cfg.policy_device == "cpu"
+    assert collector_cfg.storing_device == "cpu"

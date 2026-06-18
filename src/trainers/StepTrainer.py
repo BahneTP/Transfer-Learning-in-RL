@@ -32,7 +32,10 @@ class StepTrainer(BaseTrainer):
     def _create_collector(self) -> None:
         from torchrl.collectors import Collector
 
-        cc = self.algorithm.get_collector_config()
+        cc = self.collector_cfg
+        policy_device = cc.policy_device or self.device
+        env_device = cc.env_device or self.device
+        storing_device = cc.storing_device or self.device
         self.collector = Collector(
             create_env_fn=self.train_env,
             policy=self.algorithm.get_explore_policy(),
@@ -40,8 +43,10 @@ class StepTrainer(BaseTrainer):
             total_frames=int(self.trainer_cfg.total_frames),
             init_random_frames=cc.init_random_frames,
             max_frames_per_traj=cc.max_frames_per_traj,
-            device=self.device,
-            storing_device=self.device,
+            policy_device=policy_device,
+            env_device=env_device,
+            storing_device=storing_device,
+            trust_policy=True,
         )
 
     def _training_loop(self) -> dict[str, float]:

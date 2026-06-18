@@ -222,7 +222,10 @@ class DERAgent:
   def _batch_tensor(self, value: np.ndarray | torch.Tensor) -> torch.Tensor:
     if not isinstance(value, torch.Tensor):
       value = torch.from_numpy(np.asarray(value))
-    return value.to(self.device)
+    non_blocking = self.device.type == "cuda" and value.device.type == "cpu"
+    if non_blocking and not value.is_pinned():
+      value = value.pin_memory()
+    return value.to(self.device, non_blocking=non_blocking)
 
   def _loss_weights(self, batch: dict[str, Any], batch_size: int) -> torch.Tensor:
     if "sampling_probabilities" not in batch:

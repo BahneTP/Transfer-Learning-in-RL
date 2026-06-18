@@ -278,6 +278,9 @@ class Atari100KAlgorithm(BaseAlgorithm):
             frames_per_batch=self.frames_per_batch,
             init_random_frames=0,
             max_frames_per_traj=self.max_frames_per_traj,
+            env_device="cpu",
+            policy_device="cpu",
+            storing_device="cpu",
         )
 
     def step(self, batch: TensorDict) -> dict[str, float]:

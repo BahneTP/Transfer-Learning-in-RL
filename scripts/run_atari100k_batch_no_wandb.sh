@@ -40,7 +40,7 @@ printf "algorithm\tgame\tseed\treturn_mean\treturn_std\treturn_min\treturn_max\t
   echo "Batch directory: ${BATCH_DIR}"
   echo
 
-  for game in battlezone; do
+  for game in qbert battlezone; do
     for seed in $(seq "${START_SEED}" "${END_SEED}"); do
       echo "=== ${ALGO} | ${game} | seed ${seed} ==="
       bash "${SCRIPT_DIR}/run_atari100k_no_wandb.sh" \
