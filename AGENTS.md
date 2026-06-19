@@ -25,6 +25,8 @@ Implemented experiments:
 | BBF       | ALE/BattleZone-v5 | `experiment=atari100k/bbf/battlezone` |
 | SAC-BBF   | ALE/Qbert-v5   | `experiment=atari100k/sac_bbf/qbert` |
 | SAC-BBF   | ALE/BattleZone-v5 | `experiment=atari100k/sac_bbf/battlezone` |
+| Dummy     | ALE/Qbert-v5   | `experiment=atari100k/dummy/qbert` |
+| Dummy     | ALE/BattleZone-v5 | `experiment=atari100k/dummy/battlezone` |
 
 Other algorithms will follow.
 

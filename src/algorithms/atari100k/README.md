@@ -1,4 +1,4 @@
-# Atari 100K: DER, SPR, SR-SPR, BBF, SAC-BBF
+# Atari 100K: DER, SPR, SR-SPR, BBF, SAC-BBF, Dummy
 
 This package ports the Atari 100K agents from `BBF-pytorch` into the
 TorchRL/Hydra framework.
@@ -12,6 +12,7 @@ Implemented algorithms:
 | SR-SPR | `algorithm=atari100k_sr_spr` |
 | BBF | `algorithm=atari100k_bbf` |
 | SAC-BBF | `algorithm=atari100k_sac_bbf` |
+| Dummy (action 0) | `algorithm=atari100k_dummy` |
 
 The implementation keeps the learning core close to `BBF-pytorch`: C51
 distributional targets, n-step returns, deterministic prioritized replay,
@@ -42,6 +43,8 @@ python src/train.py experiment=atari100k/bbf/qbert
 python src/train.py experiment=atari100k/bbf/battlezone
 python src/train.py experiment=atari100k/sac_bbf/qbert
 python src/train.py experiment=atari100k/sac_bbf/battlezone
+python src/train.py experiment=atari100k/dummy/qbert
+python src/train.py experiment=atari100k/dummy/battlezone
 ```
 
 ## Known Framework Differences From `BBF-pytorch`

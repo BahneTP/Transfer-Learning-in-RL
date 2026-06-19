@@ -10,6 +10,7 @@ from src.algorithms.atari100k.bbf import BBFAgent
 from src.algorithms.atari100k.bbf import BBFConfig
 from src.algorithms.atari100k.der import DERAgent
 from src.algorithms.atari100k.der import DERConfig
+from src.algorithms.atari100k.dummy import DummyAtari100KAlgorithm
 from src.algorithms.atari100k.sac_bbf import SACBBFAgent
 from src.algorithms.atari100k.sac_bbf import SACBBFConfig
 from src.algorithms.atari100k.spr import SRSPRAgent
@@ -24,6 +25,7 @@ __all__ = [
     "BBFConfig",
     "DERAgent",
     "DERAlgorithm",
+    "DummyAtari100KAlgorithm",
     "DERConfig",
     "SACBBFAgent",
     "SACBBFAlgorithm",

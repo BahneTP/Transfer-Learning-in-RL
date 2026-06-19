@@ -9,17 +9,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 case "${ALGO}" in
-  der|spr|sr_spr|bbf|sac_bbf) ;;
+  der|spr|sr_spr|bbf|sac_bbf|dummy) ;;
   *)
     echo "Unsupported algorithm: ${ALGO}" >&2
-    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [gpu_id] [start_seed]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf|dummy] [gpu_id] [start_seed]" >&2
     exit 2
     ;;
 esac
 
 if ! [[ "${DEVICE}" =~ ^[0-9]+$ && "${START_SEED}" =~ ^[0-9]+$ ]]; then
   echo "GPU ID and start seed must be non-negative integers." >&2
-  echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [gpu_id] [start_seed]" >&2
+  echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf|dummy] [gpu_id] [start_seed]" >&2
   exit 2
 fi
 

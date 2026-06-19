@@ -30,6 +30,8 @@ python src/train.py experiment=atari100k/bbf/qbert
 python src/train.py experiment=atari100k/bbf/battlezone
 python src/train.py experiment=atari100k/sac_bbf/qbert
 python src/train.py experiment=atari100k/sac_bbf/battlezone
+python src/train.py experiment=atari100k/dummy/qbert
+python src/train.py experiment=atari100k/dummy/battlezone
 ```
 
 ## Logging note
