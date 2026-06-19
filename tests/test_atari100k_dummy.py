@@ -19,10 +19,11 @@ def test_dummy_atari_experiment_configs_compose(experiment: str):
     )
 
     assert cfg.algorithm._target_.endswith("DummyAtari100KAlgorithm")
-    assert cfg.trainer.total_frames == 20
-    assert cfg.trainer.eval_every_n_steps == 10
-    assert cfg.trainer.num_eval_episodes == 1
-    assert cfg.eval_environment.transforms[-1].max_steps == 100
+    assert cfg.trainer.total_frames == 100_000
+    assert cfg.trainer.eval_every_n_steps == 10_000
+    assert cfg.trainer.num_eval_episodes == 10
+    assert cfg.trainer.final_num_eval_episodes == 20
+    assert cfg.eval_environment.transforms[-1].max_steps == 27_000
 
 
 def test_constant_zero_policy_emits_one_hot_action_zero():
