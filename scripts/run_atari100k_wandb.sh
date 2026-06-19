@@ -49,17 +49,5 @@ mkdir -p "${OUT_DIR}"
     "hydra.run.dir=${OUT_DIR}"
 
   echo
-  echo "Starting evaluation at: $(date --iso-8601=seconds)"
-  echo
-
-  .venv/bin/python src/eval.py "experiment=atari100k/${ALGO}/${GAME}" \
-    "trainer.accelerator=gpu" \
-    "trainer.devices=[${DEVICE}]" \
-    "trainer.seed=${SEED}" \
-    "trainer.num_eval_episodes=100" \
-    "checkpoint.resume_from=${OUT_DIR}/checkpoints/last.pt" \
-    "hydra.run.dir=${OUT_DIR}/eval"
-
-  echo
   echo "Finished at: $(date --iso-8601=seconds)"
 } 2>&1 | tee -a "${LOG_FILE}"

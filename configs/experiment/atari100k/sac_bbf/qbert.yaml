@@ -16,4 +16,6 @@ trainer:
   devices: [0]
   num_envs: 1
   log_every_n_steps: 1_000
-  num_eval_episodes: 100
+  eval_every_n_steps: 10_000
+  num_eval_episodes: 10
+  final_num_eval_episodes: 20

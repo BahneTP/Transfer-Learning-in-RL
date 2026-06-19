@@ -42,6 +42,9 @@ def test_atari100k_experiment_configs_compose(experiment: str):
     assert cfg.environment.name.startswith("ALE/")
     assert cfg.trainer.total_frames == 100_000
     assert cfg.algorithm.obs_key == "pixels"
+    assert cfg.trainer.eval_every_n_steps == 10_000
+    assert cfg.trainer.num_eval_episodes == 10
+    assert cfg.trainer.final_num_eval_episodes == 20
     assert cfg.algorithm.seed == cfg.trainer.seed
 
 
@@ -52,6 +55,7 @@ def test_smoke_atari100k_der_qbert():
         "atari100k/der/qbert",
         [
             *BASE_OVERRIDES,
+            "trainer.eval_every_n_steps=null",
             "trainer.total_frames=20",
             "trainer.log_every_n_steps=10",
             "algorithm.replay_capacity=128",

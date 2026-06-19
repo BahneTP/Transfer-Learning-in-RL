@@ -17,6 +17,9 @@ trainer:
   total_frames: 1_000_000
   num_envs: 1             # number of parallel environments
   log_every_n_steps: 1_000
+  eval_every_n_steps: null       # disabled unless set by an experiment
+  num_eval_episodes: 10
+  final_num_eval_episodes: null  # falls back to num_eval_episodes
 
 checkpoint:
   save_dir: ${paths.output_dir}/checkpoints

@@ -154,7 +154,7 @@ class BaseTrainer(ABC):
         t = torch.tensor(returns, dtype=torch.float32)
         return {
             "eval/return_mean": t.mean().item(),
-            "eval/return_std": t.std().item(),
+            "eval/return_std": t.std(unbiased=False).item(),
             "eval/return_min": t.min().item(),
             "eval/return_max": t.max().item(),
         }

@@ -14,6 +14,8 @@ DQN reference (sota-implementations/dqn/dqn_cartpole.py):
   - ``train/q_values``: mean Q-value of the actions actually executed.
   - ``time/collect``, ``time/step``, ``time/speed``: collector wait, in-step
     optimisation time, and frames/second for the iteration.
+  - ``eval/return_*``: periodic greedy-policy evaluation on the separate
+    evaluation environment.
 """
 from __future__ import annotations
 
@@ -51,6 +53,13 @@ class StepTrainer(BaseTrainer):
 
     def _training_loop(self) -> dict[str, float]:
         log_every = int(self.trainer_cfg.log_every_n_steps)
+        total_frames = int(self.trainer_cfg.total_frames)
+        eval_every = int(self.trainer_cfg.get("eval_every_n_steps", 0) or 0)
+        eval_episodes = int(self.trainer_cfg.get("num_eval_episodes", 10))
+        final_eval_episodes = int(
+            self.trainer_cfg.get("final_num_eval_episodes", eval_episodes)
+            or eval_episodes
+        )
         metrics: dict[str, float] = {}
 
         collector_iter = iter(self.collector)
@@ -69,7 +78,25 @@ class StepTrainer(BaseTrainer):
             metrics = self.algorithm.step(batch)
             step_time = time.perf_counter() - step_start
 
-            if self._should_log(log_every, batch_frames):
+            num_eval_episodes = _evaluation_episode_count(
+                step=self._step,
+                batch_frames=batch_frames,
+                total_frames=total_frames,
+                eval_every=eval_every,
+                eval_episodes=eval_episodes,
+                final_eval_episodes=final_eval_episodes,
+            )
+            if num_eval_episodes is not None:
+                eval_start = time.perf_counter()
+                eval_metrics = self.evaluate(num_episodes=num_eval_episodes)
+                metrics.update(eval_metrics)
+                metrics["eval/num_episodes"] = float(num_eval_episodes)
+                metrics["time/eval"] = time.perf_counter() - eval_start
+                print(f"\nEvaluation at step {self._step} ({num_eval_episodes} episodes):")
+                for key, value in eval_metrics.items():
+                    print(f"  {key}: {value:.4f}")
+
+            if self._should_log(log_every, batch_frames) or num_eval_episodes is not None:
                 metrics.update(_batch_metrics(batch))
                 total_time = collect_time + step_time
                 metrics["time/collect"] = collect_time
@@ -85,6 +112,29 @@ class StepTrainer(BaseTrainer):
                 )
 
         return metrics
+
+
+def _evaluation_episode_count(
+    *,
+    step: int,
+    batch_frames: int,
+    total_frames: int,
+    eval_every: int,
+    eval_episodes: int,
+    final_eval_episodes: int,
+) -> int | None:
+    """Return the requested evaluation size when an eval boundary is crossed."""
+    if eval_every <= 0:
+        return None
+
+    if step >= total_frames:
+        return final_eval_episodes
+
+    previous_step = step - batch_frames
+    crossed_boundary = previous_step // eval_every < step // eval_every
+    if crossed_boundary:
+        return eval_episodes
+    return None
 
 
 def _batch_metrics(batch: TensorDict) -> dict[str, float]:
