@@ -85,11 +85,13 @@ class BaseTrainer(ABC):
     def setup(self) -> None:
         """Create environment and set up the algorithm."""
         num_envs = int(self.trainer_cfg.get("num_envs", 1))
+        self.collector_cfg = self.algorithm.get_collector_config()
+        env_device = self.collector_cfg.env_device or str(self.device)
 
         def make_env():
             return self.environment.make_env(
                 num_envs=num_envs,
-                device=str(self.device),
+                device=env_device,
             )
 
         self.train_env = make_env()
@@ -127,7 +129,7 @@ class BaseTrainer(ABC):
         """
         eval_env = self.eval_environment.make_env(
             num_envs=1,
-            device=str(self.device),
+            device=self.collector_cfg.env_device or str(self.device),
         )
         policy = self.algorithm.get_policy()
 
@@ -152,7 +154,7 @@ class BaseTrainer(ABC):
         t = torch.tensor(returns, dtype=torch.float32)
         return {
             "eval/return_mean": t.mean().item(),
-            "eval/return_std": t.std().item(),
+            "eval/return_std": t.std(unbiased=False).item(),
             "eval/return_min": t.min().item(),
             "eval/return_max": t.max().item(),
         }

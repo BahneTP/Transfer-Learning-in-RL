@@ -48,10 +48,14 @@ transitions.
 | Atari HPs | [`configs/algorithm/dqn_atari.yaml`](../../../configs/algorithm/dqn_atari.yaml) |
 | CartPole experiment | [`configs/experiment/dqn/cartpole.yaml`](../../../configs/experiment/dqn/cartpole.yaml) |
 | Pong experiment | [`configs/experiment/dqn/pong.yaml`](../../../configs/experiment/dqn/pong.yaml) |
+| Qbert experiment | [`configs/experiment/dqn/qbert.yaml`](../../../configs/experiment/dqn/qbert.yaml) |
+| BattleZone experiment | [`configs/experiment/dqn/battlezone.yaml`](../../../configs/experiment/dqn/battlezone.yaml) |
 
 ```shell
 python src/train.py experiment=dqn/cartpole
 python src/train.py experiment=dqn/pong
+python src/train.py experiment=dqn/qbert
+python src/train.py experiment=dqn/battlezone
 ```
 
 ### Mapping pseudocode → code

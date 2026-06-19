@@ -182,14 +182,14 @@ def get_eval_return(run) -> tuple[float | None, str]:
             pass
 
     try:
-        history = run.history(keys=["train/episode_reward"], pandas=False)
+        history = run.history(keys=["train/raw_reward"], pandas=False)
         values = [
-            float(row["train/episode_reward"])
+            float(row["train/raw_reward"])
             for row in history
-            if row.get("train/episode_reward") is not None
+            if row.get("train/raw_reward") is not None
         ]
         if values:
-            return max(values), "best train/episode_reward"
+            return max(values), "best train/raw_reward"
     except Exception:
         pass
 

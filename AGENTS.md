@@ -15,8 +15,24 @@ Implemented experiments:
 | DQN       | ALE/Pong-v5    | `experiment=dqn/pong`         |
 | DDPG      | HalfCheetah-v4 | `experiment=ddpg/halfcheetah` |
 | A2C       | HalfCheetah-v4 | `experiment=a2c/halfcheetah`  |
+| DER       | ALE/Qbert-v5   | `experiment=atari100k/der/qbert` |
+| DER       | ALE/BattleZone-v5 | `experiment=atari100k/der/battlezone` |
+| SPR       | ALE/Qbert-v5   | `experiment=atari100k/spr/qbert` |
+| SPR       | ALE/BattleZone-v5 | `experiment=atari100k/spr/battlezone` |
+| SR-SPR    | ALE/Qbert-v5   | `experiment=atari100k/sr_spr/qbert` |
+| SR-SPR    | ALE/BattleZone-v5 | `experiment=atari100k/sr_spr/battlezone` |
+| BBF       | ALE/Qbert-v5   | `experiment=atari100k/bbf/qbert` |
+| BBF       | ALE/BattleZone-v5 | `experiment=atari100k/bbf/battlezone` |
+| SAC-BBF   | ALE/Qbert-v5   | `experiment=atari100k/sac_bbf/qbert` |
+| SAC-BBF   | ALE/BattleZone-v5 | `experiment=atari100k/sac_bbf/battlezone` |
 
 Other algorithms will follow.
+
+Available Atari environment config pairs:
+
+- `pong_train` / `pong_eval`
+- `qbert_train` / `qbert_eval`
+- `battlezone_train` / `battlezone_eval`
 
 ## Design principles
 
@@ -150,7 +166,7 @@ def step(self, batch: TensorDict) -> dict[str, float]:
 ```
 
 The trainer never touches the replay buffer, target network or epsilon — those are
-algorithm internals. Per-batch metrics (`train/episode_reward`,
+algorithm internals. Per-batch metrics (`train/raw_reward`,
 `train/episode_length`, `train/q_values`) and timing (`time/collect`,
 `time/step`, `time/speed`) are computed by `StepTrainer` from the collector
 batch and merged into the algorithm's metrics dict at logging boundaries.
@@ -199,8 +215,13 @@ constructor defaults.
 - `transforms`: list of `_target_`-keyed dicts, each instantiated as a
   `torchrl.envs.transforms` object and composed on top of the base env.
   Always include `StepCounter` explicitly. Add `RewardSum` if you want
-  `train/episode_reward` in the trainer metrics — it populates the
+  `train/raw_reward` in the trainer metrics — it populates the
   `("next", "episode_reward")` key the trainer reads.
+  If training uses reward clipping but you still want the unclipped training
+  score in logs, snapshot the reward to a second key before `SignTransform`
+  and add a second `RewardSum` for that key. `StepTrainer` will then log
+  `train/raw_reward` from `("next", "raw_episode_reward")` and keep the
+  clipped metric under `train/clip_reward`.
 - `gym_kwargs`: optional dict forwarded straight to `GymEnv` (e.g.
   `{"frame_skip": 4, "from_pixels": true, "pixels_only": false,
   "categorical_action_encoding": true}` for Atari).
@@ -291,6 +312,13 @@ src/
     a2c/
       a2c.py                — A2CAlgorithm; on-policy actor/critic with GAE + A2CLoss
       README.md             — theory, pseudocode, W&B benchmark table
+    atari100k/
+      algorithm.py          — TorchRL/Hydra adapter for Atari 100K agents
+      der.py, spr.py, bbf.py, sac_bbf.py — hard-ported BBF-pytorch agent cores
+      networks.py           — Rainbow/SPR/BBF network blocks and NoisyLinear
+      replay.py, sum_tree.py — Atari 100K n-step prioritized replay
+      rl.py                 — C51 projection, epsilon schedule, action selection
+      README.md             — port notes and experiment commands
   environments/
     environment.py          — Environment wrapper (holds factory kwargs, exposes make_env)
     factory.py              — make_env: gymnasium + transforms list + gym_kwargs/gym_backend
@@ -304,14 +332,22 @@ configs/
   algorithm/dqn_atari.yaml  — DQN HPs (Atari/NatureDQN defaults; pixel obs)
   algorithm/ddpg.yaml       — DDPG HPs (HalfCheetah defaults); _partial_ actor/critic/noise
   algorithm/a2c.yaml        — A2C HPs (HalfCheetah/MuJoCo defaults); _partial_ actor/value
+  algorithm/atari100k_der.yaml — DER Atari 100K HPs ported from BBF-pytorch
+  algorithm/atari100k_spr.yaml — SPR Atari 100K HPs ported from BBF-pytorch
+  algorithm/atari100k_sr_spr.yaml — SR-SPR Atari 100K HPs ported from BBF-pytorch
+  algorithm/atari100k_bbf.yaml — BBF Atari 100K HPs ported from BBF-pytorch
+  algorithm/atari100k_sac_bbf.yaml — SAC-BBF Atari 100K HPs ported from BBF-pytorch
   environment/cartpole.yaml — env kwargs (name, transforms)
   environment/pong_train.yaml — Atari Pong env (training transforms incl. EndOfLife + Sign + VecNorm)
   environment/pong_eval.yaml  — Atari Pong env (eval transforms; drops EndOfLife + Sign + VecNorm)
   environment/halfcheetah.yaml — HalfCheetah-v4 (DoubleToFloat + InitTracker)
+  environment/atari100k_train.yaml — single-frame Atari 100K train preprocessing
+  environment/atari100k_eval.yaml  — single-frame Atari 100K eval preprocessing
   experiment/dqn/cartpole.yaml — composed CartPole experiment
   experiment/dqn/pong.yaml     — composed Atari Pong experiment
   experiment/ddpg/halfcheetah.yaml — composed DDPG HalfCheetah experiment
   experiment/a2c/halfcheetah.yaml — composed A2C HalfCheetah experiment
+  experiment/atari100k/{der,spr,bbf}/{qbert,battlezone}.yaml
   logger/{wandb,tensorboard}.yaml
   paths/default.yaml
   train.yaml, eval.yaml
@@ -366,6 +402,9 @@ python src/train.py experiment=dqn/cartpole 'logger=[wandb]'  # experiments defa
 python src/train.py experiment=dqn/pong            # Atari Pong (40M frames, GPU)
 python src/train.py experiment=ddpg/halfcheetah    # DDPG continuous control (1M frames)
 python src/train.py experiment=a2c/halfcheetah     # A2C on-policy continuous control (1M frames)
+python src/train.py experiment=atari100k/der/qbert
+python src/train.py experiment=atari100k/spr/battlezone
+python src/train.py experiment=atari100k/bbf/qbert
 python scripts/update_algo_results.py              # refresh algo README benchmark tables (W&B tag: template)
 pytest tests/test_smoke.py -v
 ```
