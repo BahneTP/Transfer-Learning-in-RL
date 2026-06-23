@@ -14,7 +14,6 @@ class NoopResetEnv(gym.Wrapper):
     def __init__(self, env: gym.Env, noop_max: int = 30) -> None:
         super().__init__(env)
         self.noop_max = noop_max
-        self._rng = np.random.default_rng()
 
     def reset(
         self,
@@ -23,10 +22,8 @@ class NoopResetEnv(gym.Wrapper):
         options: dict[str, Any] | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         observation, info = self.env.reset(seed=seed, options=options)
-        if seed is not None:
-            self._rng = np.random.default_rng(seed)
         noops = (
-            int(self._rng.integers(1, self.noop_max + 1))
+            int(self.np_random.integers(1, self.noop_max + 1))
             if self.noop_max > 0
             else 0
         )

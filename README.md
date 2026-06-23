@@ -45,3 +45,19 @@ Available Atari environment configs now include:
 - `pong_train` / `pong_eval`
 - `qbert_train` / `qbert_eval`
 - `battlezone_train` / `battlezone_eval`
+
+## Reproducibility
+
+`trainer.seed` seeds Python, NumPy, PyTorch, the training environment, the
+evaluation environment, and parallel environment workers. Training and
+evaluation use separate deterministic seed streams, so they do not share an
+environment seed.
+
+The default `trainer.deterministic: false` keeps the normal high-performance
+PyTorch kernels. Set it to `true` for debugging or strict reproducibility; this
+requires deterministic PyTorch operations and disables cuDNN benchmarking, so
+it may reduce performance or raise an error when an operation has no
+deterministic implementation.
+
+Exact continuation from a mid-episode checkpoint is not guaranteed because
+live environment state is not part of algorithm checkpoints.

@@ -292,6 +292,30 @@ Use this when training-time and evaluation-time observations should differ
 `BaseTrainer` owns env lifecycle, `evaluate(num_episodes)` (greedy rollout), and
 checkpoint orchestration.
 
+### Reproducibility
+
+`src/utils/seeding.py` owns process-wide seeding. `train.py` and `eval.py` call
+`seed_everything()` before constructing environments or algorithms.
+
+`BaseTrainer` uses `trainer.seed` for training and derives a separate, stable
+evaluation environment seed. It passes those seeds through
+`Environment.make_env(..., seed=...)`; the environment factory calls
+`EnvBase.set_seed()`. TorchRL then assigns deterministic distinct seeds to
+`ParallelEnv` workers.
+
+Keep this boundary intact:
+
+- framework code seeds process RNGs and environment instances;
+- algorithms continue to own replay, exploration, augmentation, and any
+  algorithm-specific generators;
+- trainer code must not reach into those algorithm internals.
+
+`trainer.deterministic` defaults to `false`, preserving normal kernel
+performance while keeping all RNGs seeded. When set to `true`, PyTorch
+deterministic algorithms are required and cuDNN benchmarking is disabled.
+Exact mid-episode checkpoint continuation is outside this guarantee because
+live environment state is not checkpointed.
+
 ## File map
 
 ```

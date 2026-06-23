@@ -24,7 +24,10 @@ def _evaluate(cfg: DictConfig) -> dict[str, float]:
     from src.environments.environment import Environment
     from src.utils.seeding import seed_everything
 
-    seed_everything(int(cfg.trainer.seed))
+    seed_everything(
+        int(cfg.trainer.seed),
+        deterministic=bool(cfg.trainer.get("deterministic", False)),
+    )
 
     env_kwargs = {k: v for k, v in OmegaConf.to_container(cfg.environment, resolve=True).items()
                   if k != "_target_"}

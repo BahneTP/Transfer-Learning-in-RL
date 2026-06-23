@@ -33,7 +33,10 @@ def _train(cfg: DictConfig) -> dict[str, float]:
     from src.utils.instantiate import build_callbacks, build_loggers
     from src.utils.seeding import seed_everything
 
-    seed_everything(int(cfg.trainer.seed))
+    seed_everything(
+        int(cfg.trainer.seed),
+        deterministic=bool(cfg.trainer.get("deterministic", False)),
+    )
 
     # Build components
     env_kwargs = {k: v for k, v in OmegaConf.to_container(cfg.environment, resolve=True).items()

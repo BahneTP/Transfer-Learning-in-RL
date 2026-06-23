@@ -41,5 +41,15 @@ class Environment:
             "atari_preprocessing": atari_preprocessing,
         }
 
-    def make_env(self, num_envs: int = 1, device: str = "cpu") -> EnvBase:
-        return make_env(**self._factory_kwargs, num_envs=num_envs, device=device)
+    def make_env(
+        self,
+        num_envs: int = 1,
+        device: str = "cpu",
+        seed: int | None = None,
+    ) -> EnvBase:
+        return make_env(
+            **self._factory_kwargs,
+            num_envs=num_envs,
+            device=device,
+            seed=seed,
+        )

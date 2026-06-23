@@ -24,6 +24,7 @@ def make_env(
     gym_kwargs: dict | None = None,
     gym_backend: str | None = None,
     atari_preprocessing: dict | None = None,
+    seed: int | None = None,
     **_: object,
 ):
     """Build a (possibly vectorised) ``TransformedEnv`` for a gymnasium env.
@@ -34,6 +35,8 @@ def make_env(
         device: target device string. ``ParallelEnv`` workers always run on
             CPU because CUDA contexts cannot survive ``fork``; the collector
             moves data to ``device`` after collection.
+        seed: optional base seed. Batched environments deterministically derive
+            a distinct seed for each worker.
         transforms: list of ``_target_``-keyed dicts to apply on top of the
             base env. ``None`` or empty -> bare base env.
         gym_kwargs: extra kwargs passed straight to ``GymEnv`` (e.g.
@@ -56,8 +59,14 @@ def make_env(
     if num_envs > 1:
         from torchrl.envs import ParallelEnv
 
-        return ParallelEnv(num_envs, env_fn, mp_start_method="spawn")
-    return env_fn()
+        env = ParallelEnv(num_envs, env_fn, mp_start_method="spawn")
+    else:
+        env = env_fn()
+
+    if seed is not None:
+        # Batched envs deterministically derive a distinct seed per worker.
+        env.set_seed(seed)
+    return env
 
 
 def _instantiate_transform(cfg: dict):

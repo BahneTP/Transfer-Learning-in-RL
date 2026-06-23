@@ -13,6 +13,7 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 from src.algorithms.base import BaseAlgorithm
 from src.environments.environment import Environment
 from src.utils.device import resolve_device
+from src.utils.seeding import derive_seed
 
 
 class TrainerEvent(Enum):
@@ -73,6 +74,9 @@ class BaseTrainer(ABC):
         self.environment = environment
         self.eval_environment = eval_environment or environment
         self.callbacks = callbacks or []
+        self.seed = int(self.trainer_cfg.seed)
+        self.train_seed = self.seed
+        self.eval_seed = derive_seed(self.seed, "eval_environment")
 
         self.device = resolve_device(
             self.trainer_cfg.accelerator,
@@ -92,6 +96,7 @@ class BaseTrainer(ABC):
             return self.environment.make_env(
                 num_envs=num_envs,
                 device=env_device,
+                seed=self.train_seed,
             )
 
         self.train_env = make_env()
@@ -130,6 +135,7 @@ class BaseTrainer(ABC):
         eval_env = self.eval_environment.make_env(
             num_envs=1,
             device=self.collector_cfg.env_device or str(self.device),
+            seed=self.eval_seed,
         )
         policy = self.algorithm.get_policy()
 
