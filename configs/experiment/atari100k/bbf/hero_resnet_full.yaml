@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/bbf/hero
+  - _self_
+
+algorithm:
+  encoder_type: resnet18
+  resnet18_weights: DEFAULT
+  transfer_mode: full_finetune
+  encoder_lr_scale: 0.03
+  freeze_encoder_bn: true
+  protect_encoder_from_reset: true

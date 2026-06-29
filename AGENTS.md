@@ -15,24 +15,19 @@ Implemented experiments:
 | DQN       | ALE/Pong-v5    | `experiment=dqn/pong`         |
 | DDPG      | HalfCheetah-v4 | `experiment=ddpg/halfcheetah` |
 | A2C       | HalfCheetah-v4 | `experiment=a2c/halfcheetah`  |
-| DER       | ALE/Qbert-v5   | `experiment=atari100k/der/qbert` |
-| DER       | ALE/BattleZone-v5 | `experiment=atari100k/der/battlezone` |
-| SPR       | ALE/Qbert-v5   | `experiment=atari100k/spr/qbert` |
-| SPR       | ALE/BattleZone-v5 | `experiment=atari100k/spr/battlezone` |
-| SR-SPR    | ALE/Qbert-v5   | `experiment=atari100k/sr_spr/qbert` |
-| SR-SPR    | ALE/BattleZone-v5 | `experiment=atari100k/sr_spr/battlezone` |
-| BBF       | ALE/Qbert-v5   | `experiment=atari100k/bbf/qbert` |
-| BBF       | ALE/BattleZone-v5 | `experiment=atari100k/bbf/battlezone` |
-| SAC-BBF   | ALE/Qbert-v5   | `experiment=atari100k/sac_bbf/qbert` |
-| SAC-BBF   | ALE/BattleZone-v5 | `experiment=atari100k/sac_bbf/battlezone` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Assault-v5 | `experiment=atari100k/<algo>/assault` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/BankHeist-v5 | `experiment=atari100k/<algo>/bankheist` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/RoadRunner-v5 | `experiment=atari100k/<algo>/roadrunner` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Breakout-v5 | `experiment=atari100k/<algo>/breakout` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Hero-v5 | `experiment=atari100k/<algo>/hero` |
 
 Other algorithms will follow.
 
 Available Atari environment config pairs:
 
 - `pong_train` / `pong_eval`
-- `qbert_train` / `qbert_eval`
-- `battlezone_train` / `battlezone_eval`
+- generic `atari100k_train` / `atari100k_eval` with `atari.game` set by the
+  experiment config
 
 ## Design principles
 
@@ -91,6 +86,9 @@ parameters. For LoRA, freeze the encoder base weights and train only
 `lora_down`/`lora_up` adapter weights plus the probe/head parameters. For BBF
 transfer experiments, set `protect_encoder_from_reset=true` unless the
 experiment intentionally studies reset perturbation of transferred encoders.
+The Atari 100K adapter logs numeric transfer flags and parameter counts under
+`train/transfer_mode_*`, `train/encoder_type_*`, `train/params_*`, and
+`train/protect_encoder_from_reset` for W&B/CSV analysis.
 
 ## Algorithm constructor pattern
 
@@ -404,7 +402,8 @@ configs/
   experiment/dqn/pong.yaml     — composed Atari Pong experiment
   experiment/ddpg/halfcheetah.yaml — composed DDPG HalfCheetah experiment
   experiment/a2c/halfcheetah.yaml — composed A2C HalfCheetah experiment
-  experiment/atari100k/{der,spr,bbf}/{qbert,battlezone}.yaml
+  experiment/atari100k/{der,spr,sr_spr,bbf,sac_bbf}/{assault,bankheist,roadrunner,breakout,hero}.yaml
+  experiment/atari100k/{der,bbf}/*_resnet_{full,linear,attentive,lora}.yaml
   logger/{wandb,tensorboard}.yaml
   paths/default.yaml
   train.yaml, eval.yaml
@@ -459,9 +458,9 @@ python src/train.py experiment=dqn/cartpole 'logger=[wandb]'  # experiments defa
 python src/train.py experiment=dqn/pong            # Atari Pong (40M frames, GPU)
 python src/train.py experiment=ddpg/halfcheetah    # DDPG continuous control (1M frames)
 python src/train.py experiment=a2c/halfcheetah     # A2C on-policy continuous control (1M frames)
-python src/train.py experiment=atari100k/der/qbert
-python src/train.py experiment=atari100k/spr/battlezone
-python src/train.py experiment=atari100k/bbf/qbert
+python src/train.py experiment=atari100k/der/assault
+python src/train.py experiment=atari100k/spr/breakout
+python src/train.py experiment=atari100k/bbf/hero_resnet_lora
 python scripts/update_algo_results.py              # refresh algo README benchmark tables (W&B tag: template)
 pytest tests/test_smoke.py -v
 ```

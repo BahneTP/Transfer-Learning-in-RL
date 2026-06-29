@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ALGO="${1:-der}"
-GAME="${2:-qbert}"
+GAME="${2:-assault}"
 DEVICE="${3:-2}"
 SEED="${4:-5000}"
 
@@ -13,16 +13,16 @@ case "${ALGO}" in
   der|spr|sr_spr|bbf|sac_bbf) ;;
   *)
     echo "Unsupported algorithm: ${ALGO}" >&2
-    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [qbert|battlezone] [gpu_id] [seed] [run_root]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [assault|bankheist|roadrunner|breakout|hero] [gpu_id] [seed] [run_root]" >&2
     exit 2
     ;;
 esac
 
 case "${GAME}" in
-  qbert|battlezone) ;;
+  assault|bankheist|roadrunner|breakout|hero) ;;
   *)
     echo "Unsupported game: ${GAME}" >&2
-    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [qbert|battlezone] [gpu_id] [seed] [run_root]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [assault|bankheist|roadrunner|breakout|hero] [gpu_id] [seed] [run_root]" >&2
     exit 2
     ;;
 esac

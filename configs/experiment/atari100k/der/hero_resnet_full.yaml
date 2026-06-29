@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/der/hero
+  - _self_
+
+algorithm:
+  encoder_type: resnet18
+  resnet18_weights: DEFAULT
+  transfer_mode: full_finetune
+  encoder_lr_scale: 0.1
+  freeze_encoder_bn: true

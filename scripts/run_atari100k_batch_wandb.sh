@@ -34,13 +34,13 @@ printf "algorithm\tgame\tseed\treturn_mean\treturn_std\treturn_min\treturn_max\t
   > "${BATCH_RESULTS}"
 
 {
-  echo "Running ${ALGO} on Qbert and BattleZone with W&B"
+  echo "Running ${ALGO} on Assault, BankHeist, RoadRunner, Breakout, and Hero with W&B"
   echo "GPU: ${DEVICE}"
   echo "Seeds: ${START_SEED}-${END_SEED}"
   echo "Batch directory: ${BATCH_DIR}"
   echo
 
-  for game in qbert battlezone; do
+  for game in assault bankheist roadrunner breakout hero; do
     for seed in $(seq "${START_SEED}" "${END_SEED}"); do
       echo "=== ${ALGO} | ${game} | seed ${seed} ==="
       bash "${SCRIPT_DIR}/run_atari100k_wandb.sh" \
@@ -60,5 +60,5 @@ printf "algorithm\tgame\tseed\treturn_mean\treturn_std\treturn_min\treturn_max\t
     done
   done
 
-  echo "Finished all 10 runs."
+  echo "Finished all 25 runs."
 } 2>&1 | tee -a "${BATCH_LOG}"

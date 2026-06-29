@@ -21,20 +21,24 @@ BASE_OVERRIDES = [
     "hydra.run.dir=/tmp/atari100k_smoke_tests",
 ]
 
+ATARI100K_GAMES = ["assault", "bankheist", "roadrunner", "breakout", "hero"]
+ATARI100K_GAME_NAMES = {
+    "assault": "Assault",
+    "bankheist": "BankHeist",
+    "roadrunner": "RoadRunner",
+    "breakout": "Breakout",
+    "hero": "Hero",
+}
+ATARI100K_ALGORITHMS = ["der", "spr", "sr_spr", "bbf", "sac_bbf"]
+ATARI100K_TRANSFER_MODES = ["full", "linear", "attentive", "lora"]
+
 
 @pytest.mark.parametrize(
     "experiment",
     [
-        "atari100k/der/qbert",
-        "atari100k/der/battlezone",
-        "atari100k/spr/qbert",
-        "atari100k/spr/battlezone",
-        "atari100k/sr_spr/qbert",
-        "atari100k/sr_spr/battlezone",
-        "atari100k/bbf/qbert",
-        "atari100k/bbf/battlezone",
-        "atari100k/sac_bbf/qbert",
-        "atari100k/sac_bbf/battlezone",
+        f"atari100k/{algorithm}/{game}"
+        for algorithm in ATARI100K_ALGORITHMS
+        for game in ATARI100K_GAMES
     ],
 )
 def test_atari100k_experiment_configs_compose(experiment: str):
@@ -48,11 +52,31 @@ def test_atari100k_experiment_configs_compose(experiment: str):
     assert cfg.algorithm.seed == cfg.trainer.seed
 
 
-def test_smoke_atari100k_der_qbert():
-    """DER on Qbert: tiny replay/update path through the real TorchRL adapter."""
+@pytest.mark.parametrize(
+    "experiment",
+    [
+        f"atari100k/{algorithm}/{game}_resnet_{mode}"
+        for algorithm in ("der", "bbf")
+        for game in ATARI100K_GAMES
+        for mode in ATARI100K_TRANSFER_MODES
+    ],
+)
+def test_atari100k_resnet_transfer_experiment_configs_compose(experiment: str):
+    cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
+    game_key = experiment.split("/")[-1].split("_resnet_")[0]
+    assert cfg.atari.game == ATARI100K_GAME_NAMES[game_key]
+    assert cfg.algorithm.encoder_type == "resnet18"
+    assert cfg.algorithm.resnet18_weights == "DEFAULT"
+    assert cfg.algorithm.transfer_mode != "none"
+    if "/bbf/" in experiment:
+        assert cfg.algorithm.protect_encoder_from_reset is True
+
+
+def test_smoke_atari100k_der_assault():
+    """DER on Assault: tiny replay/update path through the real TorchRL adapter."""
     pytest.importorskip("ale_py")
     cfg = load_experiment_cfg(
-        "atari100k/der/qbert",
+        "atari100k/der/assault",
         [
             *BASE_OVERRIDES,
             "trainer.eval_every_n_steps=null",
@@ -291,7 +315,7 @@ def test_spr_prefetch_reuses_the_background_sample():
 
 
 def test_sr_spr_reference_preset_values_compose():
-    cfg = load_experiment_cfg("atari100k/sr_spr/qbert", BASE_OVERRIDES)
+    cfg = load_experiment_cfg("atari100k/sr_spr/assault", BASE_OVERRIDES)
 
     assert cfg.algorithm.reset_every == 5_000
     assert cfg.algorithm.target_update_tau == 0.005
@@ -456,6 +480,34 @@ def test_lora_mode_trains_only_encoder_adapters_and_heads():
 
     assert metrics["TotalLoss"] >= 0.0
     assert metrics["priorities"].shape == (2,)
+
+
+def test_static_transfer_metrics_include_parameter_counts():
+    from src.algorithms.atari100k.algorithm import Atari100KAlgorithm
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    agent = DERAgent(
+        DERConfig(
+            num_actions=4,
+            encoder_type="resnet18",
+            transfer_mode="lora",
+            hidden_dim=128,
+            lora_rank=4,
+            device="cpu",
+        ),
+        seed=31,
+    )
+    algorithm = Atari100KAlgorithm()
+    algorithm.agent = agent
+
+    metrics = algorithm._build_static_train_metrics()
+
+    assert metrics["train/transfer_mode_lora"] == 1.0
+    assert metrics["train/encoder_type_resnet18"] == 1.0
+    assert metrics["train/params_total"] > 0
+    assert metrics["train/params_trainable"] > 0
+    assert metrics["train/params_encoder_total"] > metrics["train/params_encoder_trainable"]
+    assert metrics["train/params_lora_trainable"] > 0
 
 
 def test_freeze_encoder_bn_keeps_batch_norm_eval_after_train_step():

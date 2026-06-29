@@ -1,13 +1,13 @@
 # @package _global_
 defaults:
-  - override /algorithm: atari100k_spr
+  - override /algorithm: atari100k_sr_spr
   - override /environment: atari100k_train
   - override /environment@eval_environment: atari100k_eval
   - override /logger: wandb
   - _self_
 
 atari:
-  game: Qbert
+  game: Hero
 
 trainer:
   total_frames: 100_000

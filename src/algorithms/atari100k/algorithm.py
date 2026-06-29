@@ -305,6 +305,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
             eval_mode=False,
             one_hot_actions=self._one_hot_actions,
         )
+        self._static_train_metrics = self._build_static_train_metrics()
 
     def get_collector_config(self) -> CollectorConfig:
         return CollectorConfig(
@@ -329,6 +330,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
             self.agent.training_steps = self._collected_frames
         metrics = _merge_metrics(all_metrics, prefix="train/")
         metrics["train/epsilon"] = self._current_epsilon()
+        metrics.update(self._static_train_metrics)
         return metrics
 
     def get_policy(self) -> TensorDictModule:
@@ -484,6 +486,58 @@ class Atari100KAlgorithm(BaseAlgorithm):
 
     def _replay_update_horizon(self, config: ConfigT) -> int:
         return int(getattr(config, "max_update_horizon", config.update_horizon))
+
+    def _build_static_train_metrics(self) -> dict[str, float]:
+        config = self.agent.config
+        metrics = {
+            "train/transfer_mode_none": float(config.transfer_mode == "none"),
+            "train/transfer_mode_full_finetune": float(config.transfer_mode == "full_finetune"),
+            "train/transfer_mode_linear_probe": float(config.transfer_mode == "linear_probe"),
+            "train/transfer_mode_attentive_probe": float(config.transfer_mode == "attentive_probe"),
+            "train/transfer_mode_lora": float(config.transfer_mode == "lora"),
+            "train/encoder_type_dqn": float(config.encoder_type == "dqn"),
+            "train/encoder_type_impala": float(config.encoder_type == "impala"),
+            "train/encoder_type_resnet18": float(config.encoder_type == "resnet18"),
+            "train/probe_type_flatten": float(config.probe_type == "flatten"),
+            "train/probe_type_attentive": float(config.probe_type == "attentive"),
+            "train/encoder_lr_scale": float(config.encoder_lr_scale),
+            "train/freeze_encoder_bn": float(config.freeze_encoder_bn),
+            "train/lora_rank": float(config.lora_rank),
+            "train/lora_alpha": float(config.lora_alpha),
+            "train/lora_dropout": float(config.lora_dropout),
+            "train/protect_encoder_from_reset": float(getattr(config, "protect_encoder_from_reset", False)),
+        }
+        metrics.update(self._parameter_count_metrics())
+        return metrics
+
+    def _parameter_count_metrics(self) -> dict[str, float]:
+        network = self.agent.online_network
+        total = trainable = encoder_total = encoder_trainable = 0
+        lora_total = lora_trainable = head_total = head_trainable = 0
+        for name, parameter in network.named_parameters():
+            count = parameter.numel()
+            is_trainable = parameter.requires_grad
+            total += count
+            trainable += count if is_trainable else 0
+            if name.startswith("encoder."):
+                encoder_total += count
+                encoder_trainable += count if is_trainable else 0
+                if ".lora_" in name:
+                    lora_total += count
+                    lora_trainable += count if is_trainable else 0
+            else:
+                head_total += count
+                head_trainable += count if is_trainable else 0
+        return {
+            "train/params_total": float(total),
+            "train/params_trainable": float(trainable),
+            "train/params_encoder_total": float(encoder_total),
+            "train/params_encoder_trainable": float(encoder_trainable),
+            "train/params_head_probe_total": float(head_total),
+            "train/params_head_probe_trainable": float(head_trainable),
+            "train/params_lora_total": float(lora_total),
+            "train/params_lora_trainable": float(lora_trainable),
+        }
 
 
 class DERAlgorithm(Atari100KAlgorithm):

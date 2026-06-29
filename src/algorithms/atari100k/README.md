@@ -32,16 +32,16 @@ the Atari100K algorithm/replay, matching `BBF-pytorch`.
 ## Experiments
 
 ```shell
-python src/train.py experiment=atari100k/der/qbert
-python src/train.py experiment=atari100k/der/battlezone
-python src/train.py experiment=atari100k/spr/qbert
-python src/train.py experiment=atari100k/spr/battlezone
-python src/train.py experiment=atari100k/sr_spr/qbert
-python src/train.py experiment=atari100k/sr_spr/battlezone
-python src/train.py experiment=atari100k/bbf/qbert
-python src/train.py experiment=atari100k/bbf/battlezone
-python src/train.py experiment=atari100k/sac_bbf/qbert
-python src/train.py experiment=atari100k/sac_bbf/battlezone
+python src/train.py experiment=atari100k/der/assault
+python src/train.py experiment=atari100k/der/bankheist
+python src/train.py experiment=atari100k/der/roadrunner
+python src/train.py experiment=atari100k/der/breakout
+python src/train.py experiment=atari100k/der/hero
+python src/train.py experiment=atari100k/bbf/assault
+python src/train.py experiment=atari100k/bbf/bankheist
+python src/train.py experiment=atari100k/bbf/roadrunner
+python src/train.py experiment=atari100k/bbf/breakout
+python src/train.py experiment=atari100k/bbf/hero
 ```
 
 ## Known Framework Differences From `BBF-pytorch`
@@ -103,10 +103,21 @@ statistics should stay fixed. For BBF-family transfer experiments, use
 modifying the transferred encoder while still allowing the transition model and
 heads to reset according to the BBF config.
 
+The BBF baseline keeps the original reset/shrink-perturb behavior. Transfer
+experiment YAMLs for BBF set `protect_encoder_from_reset=true`, so the
+transferred encoder is protected while the rest of the BBF reset policy remains
+active.
+
+Static run metadata is logged as numeric training metrics for downstream
+analysis: `train/transfer_mode_*`, `train/encoder_type_*`,
+`train/probe_type_*`, `train/params_total`, `train/params_trainable`,
+`train/params_encoder_trainable`, `train/params_head_probe_trainable`, and
+`train/params_lora_trainable`.
+
 Example DER full fine-tuning run:
 
 ```shell
-python src/train.py experiment=atari100k/der/qbert \
+python src/train.py experiment=atari100k/der/assault \
   algorithm.encoder_type=resnet18 \
   algorithm.resnet18_weights=DEFAULT \
   algorithm.transfer_mode=full_finetune \
@@ -117,7 +128,7 @@ python src/train.py experiment=atari100k/der/qbert \
 Example DER LoRA run:
 
 ```shell
-python src/train.py experiment=atari100k/der/qbert \
+python src/train.py experiment=atari100k/der/assault \
   algorithm.encoder_type=resnet18 \
   algorithm.resnet18_weights=DEFAULT \
   algorithm.transfer_mode=lora \

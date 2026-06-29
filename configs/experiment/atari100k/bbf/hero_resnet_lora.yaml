@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/bbf/hero
+  - _self_
+
+algorithm:
+  encoder_type: resnet18
+  resnet18_weights: DEFAULT
+  transfer_mode: lora
+  lora_rank: 8
+  lora_alpha: 16.0
+  freeze_encoder_bn: true
+  protect_encoder_from_reset: true

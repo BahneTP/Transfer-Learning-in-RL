@@ -7,7 +7,7 @@ defaults:
   - _self_
 
 atari:
-  game: Qbert
+  game: RoadRunner
 
 trainer:
   total_frames: 100_000
