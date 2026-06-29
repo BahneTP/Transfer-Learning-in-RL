@@ -11,7 +11,10 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from src.algorithms.atari100k.networks import LoRAConv2d
+from src.algorithms.atari100k.networks import LoRALinear
 from src.algorithms.atari100k.networks import RainbowDQNNetwork
+from src.algorithms.atari100k.networks import apply_lora_adapters
 from src.algorithms.atari100k.rl import categorical_target
 from src.algorithms.atari100k.rl import linearly_decaying_epsilon
 from src.algorithms.atari100k.rl import select_actions
@@ -50,6 +53,9 @@ class DERConfig:
   probe_type: str = "flatten"
   encoder_lr_scale: float = 1.0
   freeze_encoder_bn: bool = False
+  lora_rank: int = 8
+  lora_alpha: float = 16.0
+  lora_dropout: float = 0.0
   renormalize_output: bool = False
   data_augmentation: bool = False
   batches_to_group: int = 1
@@ -158,24 +164,52 @@ class DERAgent:
         "full_finetune",
         "linear_probe",
         "attentive_probe",
+        "lora",
     }:
       raise ValueError(f"Unsupported transfer_mode={self.config.transfer_mode!r}")
     if self.config.probe_type not in {"flatten", "attentive"}:
       raise ValueError(f"Unsupported probe_type={self.config.probe_type!r}")
+    self._configure_network_transfer(self.online_network)
+    self._configure_network_transfer(self.target_network)
+
+  def _configure_network_transfer(self, network: RainbowDQNNetwork) -> None:
+    if self.config.transfer_mode == "lora":
+      self._install_lora_adapters(network)
+      self._set_lora_encoder_trainable(network)
+      if self.config.freeze_encoder_bn:
+        self._freeze_encoder_batch_norm(network)
+      return
     freeze_encoder = (
         self.config.transfer_mode in {"linear_probe", "attentive_probe"}
         or self.config.encoder_lr_scale <= 0.0
     )
     if freeze_encoder:
-      self._set_encoder_trainable(self.online_network, trainable=False)
-      self._set_encoder_trainable(self.target_network, trainable=False)
+      self._set_encoder_trainable(network, trainable=False)
     if self.config.freeze_encoder_bn:
-      self._freeze_encoder_batch_norm(self.online_network)
-      self._freeze_encoder_batch_norm(self.target_network)
+      self._freeze_encoder_batch_norm(network)
+
+  def _install_lora_adapters(self, network: RainbowDQNNetwork) -> None:
+    if self._has_lora_adapters(network):
+      return
+    replacements = apply_lora_adapters(
+        network.encoder,
+        rank=self.config.lora_rank,
+        alpha=self.config.lora_alpha,
+        dropout=self.config.lora_dropout,
+    )
+    if replacements == 0:
+      raise ValueError("LoRA transfer mode found no encoder Linear or Conv2d layers.")
+
+  def _set_lora_encoder_trainable(self, network: RainbowDQNNetwork) -> None:
+    for name, parameter in network.encoder.named_parameters():
+      parameter.requires_grad = ".lora_" in name or name.startswith("lora_")
 
   def _set_encoder_trainable(self, network: RainbowDQNNetwork, *, trainable: bool) -> None:
     for parameter in network.encoder.parameters():
       parameter.requires_grad = trainable
+
+  def _has_lora_adapters(self, network: RainbowDQNNetwork) -> bool:
+    return any(isinstance(module, (LoRALinear, LoRAConv2d)) for module in network.encoder.modules())
 
   def _freeze_encoder_batch_norm(self, network: RainbowDQNNetwork) -> None:
     for module in network.encoder.modules():

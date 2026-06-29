@@ -93,6 +93,9 @@ Projection/probing modes:
 - `transfer_mode=attentive_probe`: encoder is frozen. A small trainable
   attention pooling probe scores the nine spatial ResNet tokens and maps the
   pooled feature to `hidden_dim`; the heads train.
+- `transfer_mode=lora`: encoder base weights are frozen. Low-rank LoRA adapters
+  are inserted into encoder `Conv2d`/`Linear` layers; only those adapter weights,
+  the projection/probe, transition model, and heads train.
 
 Use `freeze_encoder_bn=true` for pretrained ResNet runs when BatchNorm running
 statistics should stay fixed. For BBF-family transfer experiments, use
@@ -109,4 +112,15 @@ python src/train.py experiment=atari100k/der/qbert \
   algorithm.transfer_mode=full_finetune \
   algorithm.encoder_lr_scale=0.1 \
   algorithm.freeze_encoder_bn=true
+```
+
+Example DER LoRA run:
+
+```shell
+python src/train.py experiment=atari100k/der/qbert \
+  algorithm.encoder_type=resnet18 \
+  algorithm.resnet18_weights=DEFAULT \
+  algorithm.transfer_mode=lora \
+  algorithm.lora_rank=8 \
+  algorithm.lora_alpha=16.0
 ```

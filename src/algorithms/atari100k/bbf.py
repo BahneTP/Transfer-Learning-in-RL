@@ -294,6 +294,8 @@ class BBFAgent(DERAgent):
     old_optimizer_state = self._optimizer_state_by_name()
     random_online = self._make_network().to(self.device)
     random_target = self._make_network().to(self.device)
+    self._configure_network_transfer(random_online)
+    self._configure_network_transfer(random_target)
     self._build_specific_network(random_online)
     self._build_specific_network(random_target)
     self._reset_network(self.online_network, random_online)

@@ -72,22 +72,25 @@ Public knobs:
 - `encoder_type`: `dqn`, `impala`, or `resnet18`.
 - `resnet18_weights`: `null` for random init, or torchvision names such as
   `DEFAULT` for ImageNet-pretrained weights.
-- `transfer_mode`: `none`, `full_finetune`, `linear_probe`, or
-  `attentive_probe`.
+- `transfer_mode`: `none`, `full_finetune`, `linear_probe`,
+  `attentive_probe`, or `lora`.
 - `probe_type`: `flatten` or `attentive`; `attentive_probe` forces the attentive
   probe even when this remains at its default.
 - `encoder_lr_scale`: multiplier on the base algorithm learning rate for
   encoder parameters.
 - `freeze_encoder_bn`: keeps encoder BatchNorm layers in eval mode and freezes
   their affine parameters.
+- `lora_rank`, `lora_alpha`, `lora_dropout`: LoRA adapter hyperparameters used
+  by `transfer_mode=lora`.
 - `protect_encoder_from_reset`: BBF-family reset protection that removes
   `encoder` from shrink/perturb while leaving the rest of reset logic intact.
 
 The default `transfer_mode: none` preserves the original DER/BBF behavior. For
 linear and attentive probing, freeze the encoder and train only the probe/head
-parameters. For BBF transfer experiments, set `protect_encoder_from_reset=true`
-unless the experiment intentionally studies reset perturbation of transferred
-encoders.
+parameters. For LoRA, freeze the encoder base weights and train only
+`lora_down`/`lora_up` adapter weights plus the probe/head parameters. For BBF
+transfer experiments, set `protect_encoder_from_reset=true` unless the
+experiment intentionally studies reset perturbation of transferred encoders.
 
 ## Algorithm constructor pattern
 

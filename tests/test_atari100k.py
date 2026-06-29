@@ -413,6 +413,51 @@ def test_attentive_probe_uses_attention_projection_and_freezes_encoder():
     assert output.q_values.shape == (2, 4)
 
 
+def test_lora_mode_trains_only_encoder_adapters_and_heads():
+    from src.algorithms.atari100k.networks import LoRAConv2d
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        transfer_mode="lora",
+        hidden_dim=128,
+        lora_rank=4,
+        lora_alpha=8.0,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=19)
+
+    assert any(isinstance(module, LoRAConv2d) for module in agent.online_network.encoder.modules())
+    trainable_encoder_names = [
+        name for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_names
+    assert all(".lora_" in name for name in trainable_encoder_names)
+    assert any(
+        parameter.requires_grad
+        for name, parameter in agent.online_network.named_parameters()
+        if name.startswith(("projection", "head"))
+    )
+
+    batch = {
+        "state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "next_state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "action": np.random.randint(0, 4, (2, 1), dtype=np.int32),
+        "return": np.random.randn(2, 1).astype(np.float32),
+        "terminal": np.zeros((2, 1), dtype=np.uint8),
+        "discount": np.full((2, 1), 0.99, dtype=np.float32),
+    }
+
+    metrics = agent.train_step(batch)
+
+    assert metrics["TotalLoss"] >= 0.0
+    assert metrics["priorities"].shape == (2,)
+
+
 def test_freeze_encoder_bn_keeps_batch_norm_eval_after_train_step():
     from src.algorithms.atari100k.der import DERAgent, DERConfig
 
@@ -478,6 +523,34 @@ def test_bbf_protect_encoder_from_reset_skips_encoder_perturbation():
     after = agent.online_network.state_dict()
     assert before
     assert all(torch.equal(value, after[name]) for name, value in before.items())
+
+
+def test_bbf_lora_reset_keeps_adapter_state_dict_compatible():
+    from src.algorithms.atari100k.bbf import BBFAgent, BBFConfig
+
+    config = BBFConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        transfer_mode="lora",
+        hidden_dim=128,
+        lora_rank=4,
+        reset_every=1,
+        no_resets_after=100,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = BBFAgent(config, seed=29)
+
+    agent.training_steps = 3
+    agent.reset_weights()
+
+    trainable_encoder_names = [
+        name for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_names
+    assert all(".lora_" in name for name in trainable_encoder_names)
 
 
 def test_sac_bbf_train_step_includes_policy_metrics():

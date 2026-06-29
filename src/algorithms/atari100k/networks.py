@@ -243,6 +243,125 @@ class AttentiveProbe(nn.Module):
     return self.value(pooled)
 
 
+class LoRALinear(nn.Module):
+  """Low-rank adapter wrapper for a frozen linear layer."""
+
+  def __init__(
+      self,
+      base: nn.Linear,
+      *,
+      rank: int,
+      alpha: float,
+      dropout: float,
+      initializer: InitializerName = "xavier_uniform",
+  ) -> None:
+    super().__init__()
+    if rank <= 0:
+      raise ValueError("LoRA rank must be positive.")
+    self.base = base
+    for parameter in self.base.parameters():
+      parameter.requires_grad = False
+    self.lora_down = nn.Linear(base.in_features, rank, bias=False)
+    self.lora_up = nn.Linear(rank, base.out_features, bias=False)
+    self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+    self.scaling = alpha / rank
+    _apply_initializer(self.lora_down, initializer)
+    nn.init.zeros_(self.lora_up.weight)
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.base(x) + self.lora_up(self.lora_down(self.dropout(x))) * self.scaling
+
+
+class LoRAConv2d(nn.Module):
+  """Low-rank adapter wrapper for a frozen 2D convolution."""
+
+  def __init__(
+      self,
+      base: nn.Conv2d,
+      *,
+      rank: int,
+      alpha: float,
+      dropout: float,
+      initializer: InitializerName = "xavier_uniform",
+  ) -> None:
+    super().__init__()
+    if rank <= 0:
+      raise ValueError("LoRA rank must be positive.")
+    if base.groups != 1:
+      raise ValueError("LoRAConv2d only supports groups=1 convolutions.")
+    self.base = base
+    for parameter in self.base.parameters():
+      parameter.requires_grad = False
+    self.lora_down = nn.Conv2d(
+        base.in_channels,
+        rank,
+        kernel_size=base.kernel_size,
+        stride=base.stride,
+        padding=base.padding,
+        dilation=base.dilation,
+        bias=False,
+    )
+    self.lora_up = nn.Conv2d(rank, base.out_channels, kernel_size=1, bias=False)
+    self.dropout = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
+    self.scaling = alpha / rank
+    _apply_initializer(self.lora_down, initializer)
+    nn.init.zeros_(self.lora_up.weight)
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.base(x) + self.lora_up(self.lora_down(self.dropout(x))) * self.scaling
+
+
+def apply_lora_adapters(
+    module: nn.Module,
+    *,
+    rank: int,
+    alpha: float,
+    dropout: float,
+    initializer: InitializerName = "xavier_uniform",
+) -> int:
+  """Recursively replace Linear/Conv2d children with frozen LoRA wrappers."""
+
+  replacements = 0
+  for name, child in list(module.named_children()):
+    if isinstance(child, (LoRALinear, LoRAConv2d)):
+      continue
+    if isinstance(child, nn.Linear):
+      setattr(
+          module,
+          name,
+          LoRALinear(
+              child,
+              rank=rank,
+              alpha=alpha,
+              dropout=dropout,
+              initializer=initializer,
+          ),
+      )
+      replacements += 1
+    elif isinstance(child, nn.Conv2d):
+      setattr(
+          module,
+          name,
+          LoRAConv2d(
+              child,
+              rank=rank,
+              alpha=alpha,
+              dropout=dropout,
+              initializer=initializer,
+          ),
+      )
+      replacements += 1
+    else:
+      replacements += apply_lora_adapters(
+          child,
+          rank=rank,
+          alpha=alpha,
+          dropout=dropout,
+          initializer=initializer,
+      )
+  return replacements
+
+
 class RainbowCNN(nn.Module):
   def __init__(
       self,

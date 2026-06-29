@@ -34,6 +34,9 @@ transfer_mode: none
 probe_type: flatten
 encoder_lr_scale: 1.0
 freeze_encoder_bn: false
+lora_rank: 8
+lora_alpha: 16.0
+lora_dropout: 0.0
 renormalize_output: true
 data_augmentation: true
 batches_to_group: 2

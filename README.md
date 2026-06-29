@@ -54,6 +54,9 @@ Transfer comparison modes:
   train.
 - `transfer_mode=attentive_probe`: encoder is frozen; a trainable attention
   pooling probe over spatial encoder features and the heads train.
+- `transfer_mode=lora`: encoder base weights are frozen; trainable low-rank
+  LoRA adapters are added to encoder convolution/linear layers, and the
+  projection/probe plus heads train.
 
 Example full fine-tuning run with a smaller encoder learning rate:
 
@@ -64,6 +67,17 @@ python src/train.py experiment=atari100k/der/qbert \
   algorithm.transfer_mode=full_finetune \
   algorithm.encoder_lr_scale=0.1 \
   algorithm.freeze_encoder_bn=true
+```
+
+Example LoRA run:
+
+```shell
+python src/train.py experiment=atari100k/der/qbert \
+  algorithm.encoder_type=resnet18 \
+  algorithm.resnet18_weights=DEFAULT \
+  algorithm.transfer_mode=lora \
+  algorithm.lora_rank=8 \
+  algorithm.lora_alpha=16.0
 ```
 
 For BBF transfer runs, set `algorithm.protect_encoder_from_reset=true` to keep
