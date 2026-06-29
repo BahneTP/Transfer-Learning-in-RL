@@ -32,6 +32,44 @@ python src/train.py experiment=atari100k/sac_bbf/qbert
 python src/train.py experiment=atari100k/sac_bbf/battlezone
 ```
 
+## Atari 100K Transfer Learning
+
+DER, SPR, SR-SPR, BBF, and SAC-BBF expose optional encoder transfer-learning
+knobs on the algorithm config. The default `transfer_mode: none` keeps the
+original random-initialized Atari 100K agents.
+
+ResNet-18 can be selected as an encoder while keeping the existing Atari replay,
+target, C51, and SPR code paths:
+
+```shell
+python src/train.py experiment=atari100k/der/qbert algorithm.encoder_type=resnet18
+python src/train.py experiment=atari100k/der/qbert algorithm.encoder_type=resnet18 algorithm.resnet18_weights=DEFAULT
+```
+
+Transfer comparison modes:
+
+- `transfer_mode=full_finetune`: encoder, projection/probe, and heads train.
+  Use `encoder_lr_scale` to give the encoder a smaller learning rate.
+- `transfer_mode=linear_probe`: encoder is frozen; the flat projection and heads
+  train.
+- `transfer_mode=attentive_probe`: encoder is frozen; a trainable attention
+  pooling probe over spatial encoder features and the heads train.
+
+Example full fine-tuning run with a smaller encoder learning rate:
+
+```shell
+python src/train.py experiment=atari100k/der/qbert \
+  algorithm.encoder_type=resnet18 \
+  algorithm.resnet18_weights=DEFAULT \
+  algorithm.transfer_mode=full_finetune \
+  algorithm.encoder_lr_scale=0.1 \
+  algorithm.freeze_encoder_bn=true
+```
+
+For BBF transfer runs, set `algorithm.protect_encoder_from_reset=true` to keep
+the periodic reset/shrink-perturb machinery from perturbing the transferred
+encoder.
+
 ## Logging note
 
 For Atari training runs that learn on clipped rewards, the training environment

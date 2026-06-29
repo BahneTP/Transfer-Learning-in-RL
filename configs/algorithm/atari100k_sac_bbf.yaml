@@ -29,6 +29,11 @@ weight_decay: 0.1
 encoder_type: impala
 hidden_dim: 2048
 width_scale: 4
+resnet18_weights: null
+transfer_mode: none
+probe_type: flatten
+encoder_lr_scale: 1.0
+freeze_encoder_bn: false
 renormalize_output: true
 data_augmentation: true
 batches_to_group: 2
@@ -40,6 +45,7 @@ shrink_perturb_keys: [encoder, transition_model]
 shrink_factor: 0.5
 perturb_factor: 0.5
 target_action_selection: true
+protect_encoder_from_reset: false
 entropy_decay_period: 80000
 entropy_initial_coef: 1e-2
 entropy_final_coef: 0.0

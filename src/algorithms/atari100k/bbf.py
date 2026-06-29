@@ -64,6 +64,7 @@ class BBFConfig(DERConfig):
   reset_target: bool = True
   target_action_selection: bool = True
   match_online_target_rngs: bool = True
+  protect_encoder_from_reset: bool = False
 
 
 class BBFAgent(DERAgent):
@@ -121,7 +122,7 @@ class BBFAgent(DERAgent):
     return self._merge_group_metrics(metrics)
 
   def _train_one_minibatch(self, batch: dict[str, Any]) -> dict[str, float | np.ndarray]:
-    self.online_network.train()
+    self._prepare_online_network_for_training()
     states = self._batch_tensor(batch["state"])
     next_states = self._batch_tensor(batch["next_state"])
     actions = self._batch_tensor(batch["action"]).long()
@@ -217,7 +218,7 @@ class BBFAgent(DERAgent):
 
     self.optimizer.zero_grad(set_to_none=True)
     loss.backward()
-    grad_norm = nn.utils.clip_grad_norm_(self.online_network.parameters(), max_norm=10.0)
+    grad_norm = nn.utils.clip_grad_norm_(self._trainable_online_parameters(), max_norm=10.0)
     self.optimizer.step()
     self._maybe_update_target()
     self.gradient_steps += 1
@@ -302,6 +303,7 @@ class BBFAgent(DERAgent):
       self.target_network.load_state_dict(self.online_network.state_dict())
     self.optimizer = self._make_optimizer()
     self._restore_optimizer_state_for_kept_keys(old_optimizer_state)
+    self._configure_transfer()
     self.cycle_gradient_steps = 0
     self.reset_priorities_requested = self.config.reset_priorities
 
@@ -359,13 +361,14 @@ class BBFAgent(DERAgent):
 
   def _reset_network(self, network: RainbowDQNNetwork, random_network: RainbowDQNNetwork) -> None:
     keep_prefixes = self._keys_to_copy()
+    shrink_perturb_keys = self._shrink_perturb_keys()
     random_state = random_network.state_dict()
     current_state = network.state_dict()
     new_state = {}
     for name, value in current_state.items():
       if not value.dtype.is_floating_point:
         new_state[name] = value
-      elif self._matches_prefix(name, self.config.shrink_perturb_keys):
+      elif self._matches_prefix(name, shrink_perturb_keys):
         interpolated = value * self.config.shrink_factor + random_state[name] * self.config.perturb_factor
         new_state[name] = interpolated if self._matches_prefix(name, keep_prefixes) else random_state[name]
       elif self._matches_prefix(name, keep_prefixes):
@@ -373,6 +376,14 @@ class BBFAgent(DERAgent):
       else:
         new_state[name] = random_state[name]
     network.load_state_dict(new_state)
+
+  def _shrink_perturb_keys(self) -> tuple[str, ...]:
+    if not self.config.protect_encoder_from_reset:
+      return self.config.shrink_perturb_keys
+    return tuple(
+        key for key in self.config.shrink_perturb_keys
+        if key != "encoder"
+    )
 
   def _keys_to_copy(self) -> tuple[str, ...]:
     keys = []

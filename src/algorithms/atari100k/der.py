@@ -45,6 +45,11 @@ class DERConfig:
   encoder_type: str = "dqn"
   hidden_dim: int = 512
   width_scale: int = 1
+  resnet18_weights: str | None = None
+  transfer_mode: str = "none"
+  probe_type: str = "flatten"
+  encoder_lr_scale: float = 1.0
+  freeze_encoder_bn: bool = False
   renormalize_output: bool = False
   data_augmentation: bool = False
   batches_to_group: int = 1
@@ -76,6 +81,7 @@ class DERAgent:
     self.online_network = self._make_network().to(self.device)
     self.target_network = self._make_network().to(self.device)
     self._build_lazy_modules()
+    self._configure_transfer()
     self.target_network.load_state_dict(self.online_network.state_dict())
     self.target_network.eval()
     self.optimizer = self._make_optimizer()
@@ -90,26 +96,104 @@ class DERAgent:
         encoder_type=self.config.encoder_type,  # type: ignore[arg-type]
         hidden_dim=self.config.hidden_dim,
         width_scale=self.config.width_scale,
+        resnet18_weights=self.config.resnet18_weights,
+        probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
     )
 
+  def _network_probe_type(self) -> str:
+    if self.config.transfer_mode == "attentive_probe":
+      return "attentive"
+    return self.config.probe_type
+
   def _make_optimizer(self) -> torch.optim.Optimizer:
-    decay_params = []
-    no_decay_params = []
-    for parameter in self.online_network.parameters():
-      if parameter.ndim == 1:
-        no_decay_params.append(parameter)
-      else:
-        decay_params.append(parameter)
+    parameter_groups = self._optimizer_parameter_groups(
+        base_lr=self.config.learning_rate,
+        encoder_lr=self.config.learning_rate * self.config.encoder_lr_scale,
+    )
     return torch.optim.AdamW(
-        [
-            {"params": decay_params, "weight_decay": self.config.weight_decay},
-            {"params": no_decay_params, "weight_decay": 0.0},
-        ],
+        parameter_groups,
         lr=self.config.learning_rate,
         eps=self.config.adam_eps,
     )
+
+  def _optimizer_parameter_groups(
+      self,
+      *,
+      base_lr: float,
+      encoder_lr: float,
+  ) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, bool], list[nn.Parameter]] = {
+        ("encoder", True): [],
+        ("encoder", False): [],
+        ("head", True): [],
+        ("head", False): [],
+    }
+    for name, parameter in self.online_network.named_parameters():
+      if not parameter.requires_grad:
+        continue
+      bucket = "encoder" if name.startswith("encoder.") else "head"
+      has_weight_decay = parameter.ndim != 1
+      groups[(bucket, has_weight_decay)].append(parameter)
+
+    parameter_groups: list[dict[str, Any]] = []
+    for bucket, lr in (("encoder", encoder_lr), ("head", base_lr)):
+      for has_weight_decay in (True, False):
+        params = groups[(bucket, has_weight_decay)]
+        if not params:
+          continue
+        parameter_groups.append({
+            "params": params,
+            "lr": lr,
+            "weight_decay": self.config.weight_decay if has_weight_decay else 0.0,
+        })
+    if not parameter_groups:
+      raise ValueError("No trainable parameters remain after applying transfer settings.")
+    return parameter_groups
+
+  def _configure_transfer(self) -> None:
+    if self.config.transfer_mode not in {
+        "none",
+        "full_finetune",
+        "linear_probe",
+        "attentive_probe",
+    }:
+      raise ValueError(f"Unsupported transfer_mode={self.config.transfer_mode!r}")
+    if self.config.probe_type not in {"flatten", "attentive"}:
+      raise ValueError(f"Unsupported probe_type={self.config.probe_type!r}")
+    freeze_encoder = (
+        self.config.transfer_mode in {"linear_probe", "attentive_probe"}
+        or self.config.encoder_lr_scale <= 0.0
+    )
+    if freeze_encoder:
+      self._set_encoder_trainable(self.online_network, trainable=False)
+      self._set_encoder_trainable(self.target_network, trainable=False)
+    if self.config.freeze_encoder_bn:
+      self._freeze_encoder_batch_norm(self.online_network)
+      self._freeze_encoder_batch_norm(self.target_network)
+
+  def _set_encoder_trainable(self, network: RainbowDQNNetwork, *, trainable: bool) -> None:
+    for parameter in network.encoder.parameters():
+      parameter.requires_grad = trainable
+
+  def _freeze_encoder_batch_norm(self, network: RainbowDQNNetwork) -> None:
+    for module in network.encoder.modules():
+      if isinstance(module, nn.modules.batchnorm._BatchNorm):
+        module.eval()
+        for parameter in module.parameters():
+          parameter.requires_grad = False
+
+  def _prepare_online_network_for_training(self) -> None:
+    self.online_network.train()
+    if self.config.freeze_encoder_bn:
+      self._freeze_encoder_batch_norm(self.online_network)
+
+  def _trainable_online_parameters(self) -> list[nn.Parameter]:
+    return [
+        parameter for parameter in self.online_network.parameters()
+        if parameter.requires_grad
+    ]
 
   def _build_lazy_modules(self) -> None:
     height, width = self.config.observation_shape
@@ -145,7 +229,7 @@ class DERAgent:
       )
 
   def train_step(self, batch: dict[str, Any]) -> dict[str, float | np.ndarray]:
-    self.online_network.train()
+    self._prepare_online_network_for_training()
     states = self._batch_tensor(batch["state"])[:, 0]
     next_states = self._batch_tensor(batch["next_state"])[:, 0]
     actions = self._batch_tensor(batch["action"]).long()[:, 0]
@@ -181,7 +265,7 @@ class DERAgent:
 
     self.optimizer.zero_grad(set_to_none=True)
     loss.backward()
-    grad_norm = nn.utils.clip_grad_norm_(self.online_network.parameters(), max_norm=10.0)
+    grad_norm = nn.utils.clip_grad_norm_(self._trainable_online_parameters(), max_norm=10.0)
     self.optimizer.step()
     self._maybe_update_target()
     self.gradient_steps += 1

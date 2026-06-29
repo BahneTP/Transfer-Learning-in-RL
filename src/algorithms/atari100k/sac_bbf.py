@@ -42,6 +42,8 @@ class SACBBFAgent(BBFAgent):
         encoder_type=self.config.encoder_type,  # type: ignore[arg-type]
         hidden_dim=self.config.hidden_dim,
         width_scale=self.config.width_scale,
+        resnet18_weights=self.config.resnet18_weights,
+        probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
     )
@@ -61,7 +63,7 @@ class SACBBFAgent(BBFAgent):
         alpha_params.append(parameter)
         continue
       has_weight_decay = parameter.ndim != 1
-      if name.startswith(("encoder.", "transition_model.")):
+      if name.startswith("encoder."):
         (encoder_decay_params if has_weight_decay else encoder_no_decay_params).append(parameter)
       elif name.startswith(("policy_projection", "predict_policy", "policy")):
         (policy_decay_params if has_weight_decay else policy_no_decay_params).append(parameter)
@@ -72,13 +74,13 @@ class SACBBFAgent(BBFAgent):
     if encoder_decay_params:
       parameter_groups.append({
           "params": encoder_decay_params,
-          "lr": self.config.learning_rate,
+          "lr": self.config.learning_rate * self.config.encoder_lr_scale,
           "weight_decay": self.config.weight_decay,
       })
     if encoder_no_decay_params:
       parameter_groups.append({
           "params": encoder_no_decay_params,
-          "lr": self.config.learning_rate,
+          "lr": self.config.learning_rate * self.config.encoder_lr_scale,
           "weight_decay": 0.0,
       })
     if head_decay_params:
@@ -154,7 +156,7 @@ class SACBBFAgent(BBFAgent):
     return self._merge_group_metrics(metrics)
 
   def _train_one_minibatch(self, batch: dict[str, Any]) -> dict[str, float | np.ndarray]:
-    self.online_network.train()
+    self._prepare_online_network_for_training()
     states = self._batch_tensor(batch["state"])
     next_states = self._batch_tensor(batch["next_state"])
     actions = self._batch_tensor(batch["action"]).long()
@@ -280,7 +282,7 @@ class SACBBFAgent(BBFAgent):
 
     self.optimizer.zero_grad(set_to_none=True)
     loss.backward()
-    grad_norm = torch.nn.utils.clip_grad_norm_(self.online_network.parameters(), max_norm=10.0)
+    grad_norm = torch.nn.utils.clip_grad_norm_(self._trainable_online_parameters(), max_norm=10.0)
     self.optimizer.step()
     self._maybe_update_target()
     self.gradient_steps += 1

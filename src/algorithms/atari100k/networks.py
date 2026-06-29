@@ -9,6 +9,8 @@ from typing import Literal
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torchvision.models import ResNet18_Weights
+from torchvision.models import resnet18
 
 
 InitializerName = Literal[
@@ -18,7 +20,8 @@ InitializerName = Literal[
     "kaiming_normal",
     "orthogonal",
 ]
-EncoderName = Literal["dqn", "impala"]
+EncoderName = Literal["dqn", "impala", "resnet18"]
+ProbeName = Literal["flatten", "attentive"]
 
 
 @dataclasses.dataclass
@@ -213,6 +216,33 @@ class LinearHead(nn.Module):
     return adv
 
 
+class AttentiveProbe(nn.Module):
+  """Small trainable attention pooling head over spatial encoder features."""
+
+  def __init__(
+      self,
+      *,
+      in_channels: int,
+      out_features: int,
+      initializer: InitializerName = "xavier_uniform",
+  ) -> None:
+    super().__init__()
+    self.query = nn.Parameter(torch.empty(in_channels))
+    self.value = nn.Linear(in_channels, out_features)
+    self.score = nn.Linear(in_channels, 1)
+    nn.init.normal_(self.query, std=1.0 / math.sqrt(in_channels))
+    _apply_initializer(self.value, initializer)
+    _apply_initializer(self.score, initializer)
+
+  def forward(self, spatial_latent: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+    del eval_mode
+    tokens = spatial_latent.flatten(2).transpose(1, 2)
+    scores = self.score(tokens + self.query.view(1, 1, -1)).squeeze(-1)
+    weights = scores.softmax(dim=-1)
+    pooled = torch.sum(tokens * weights.unsqueeze(-1), dim=1)
+    return self.value(pooled)
+
+
 class RainbowCNN(nn.Module):
   def __init__(
       self,
@@ -308,6 +338,78 @@ class ImpalaCNN(nn.Module):
     return F.relu(self.stages(x))
 
 
+class ResNet18Encoder(nn.Module):
+  """ResNet-18 trunk adapted for Atari frame stacks.
+
+  The encoder keeps the spatial feature map instead of ResNet's average-pool
+  and classifier, matching the interface used by the DQN and IMPALA encoders.
+  """
+
+  def __init__(
+      self,
+      *,
+      input_channels: int = 4,
+      weights: str | None = None,
+  ) -> None:
+    super().__init__()
+    resolved_weights = self._resolve_weights(weights)
+    backbone = resnet18(weights=resolved_weights)
+    if resolved_weights is None:
+      mean = torch.zeros(input_channels)
+      std = torch.ones(input_channels)
+    else:
+      image_mean = torch.as_tensor(resolved_weights.transforms().mean)
+      image_std = torch.as_tensor(resolved_weights.transforms().std)
+      mean = image_mean.mean().repeat(input_channels)
+      std = image_std.mean().repeat(input_channels)
+    self.register_buffer("input_mean", mean.view(1, input_channels, 1, 1))
+    self.register_buffer("input_std", std.view(1, input_channels, 1, 1))
+    self.stem = nn.Sequential(
+        self._adapt_first_conv(backbone.conv1, input_channels),
+        backbone.bn1,
+        backbone.relu,
+        backbone.maxpool,
+    )
+    self.layers = nn.Sequential(
+        backbone.layer1,
+        backbone.layer2,
+        backbone.layer3,
+        backbone.layer4,
+    )
+    self.output_channels = 512
+
+  def _resolve_weights(self, weights: str | None) -> ResNet18_Weights | None:
+    if weights is None or str(weights).lower() in {"", "none", "false"}:
+      return None
+    if str(weights).lower() in {"default", "imagenet", "imagenet1k"}:
+      return ResNet18_Weights.DEFAULT
+    return ResNet18_Weights[weights]
+
+  def _adapt_first_conv(self, conv: nn.Conv2d, input_channels: int) -> nn.Conv2d:
+    adapted = nn.Conv2d(
+        input_channels,
+        conv.out_channels,
+        kernel_size=conv.kernel_size,
+        stride=conv.stride,
+        padding=conv.padding,
+        bias=conv.bias is not None,
+    )
+    with torch.no_grad():
+      if input_channels == conv.in_channels:
+        adapted.weight.copy_(conv.weight)
+      else:
+        gray_weight = conv.weight.mean(dim=1, keepdim=True)
+        adapted.weight.copy_(gray_weight.repeat(1, input_channels, 1, 1))
+        adapted.weight.mul_(conv.in_channels / input_channels)
+      if conv.bias is not None and adapted.bias is not None:
+        adapted.bias.copy_(conv.bias)
+    return adapted
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    x = (x - self.input_mean) / self.input_std
+    return self.layers(self.stem(x))
+
+
 class ConvTransitionCell(nn.Module):
   def __init__(
       self,
@@ -380,6 +482,8 @@ class RainbowDQNNetwork(nn.Module):
       use_spatial_embeddings: bool = False,
       initializer: InitializerName = "xavier_uniform",
       input_channels: int = 4,
+      resnet18_weights: str | None = None,
+      probe_type: ProbeName = "flatten",
   ) -> None:
     super().__init__()
     self.num_actions = num_actions
@@ -397,6 +501,12 @@ class RainbowDQNNetwork(nn.Module):
           initializer=initializer,
       )
       latent_dim = self.encoder.output_channels
+    elif encoder_type == "resnet18":
+      self.encoder = ResNet18Encoder(
+          input_channels=input_channels,
+          weights=resnet18_weights,
+      )
+      latent_dim = self.encoder.output_channels
     else:
       raise NotImplementedError(f"Unsupported encoder_type {encoder_type}")
     self.transition_model = TransitionModel(
@@ -407,22 +517,33 @@ class RainbowDQNNetwork(nn.Module):
     )
     self.projection = None
     self.projection_out_dim: int | None = None
+    self.latent_dim = latent_dim
     self.hidden_dim = hidden_dim
     self.noisy = noisy
     self.dueling = dueling
     self.initializer = initializer
     self.input_channels = input_channels
+    self.probe_type = probe_type
     self.head: LinearHead | None = None
     self.predictor: nn.Linear | None = None
 
   def _ensure_head(self, representation_dim: int, device: torch.device) -> None:
     if self.projection is None:
-      self.projection = FeatureLayer(
-          noisy=self.noisy,
-          in_features=representation_dim,
-          out_features=self.hidden_dim,
-          initializer=self.initializer,
-      )
+      if self.probe_type == "flatten":
+        self.projection = FeatureLayer(
+            noisy=self.noisy,
+            in_features=representation_dim,
+            out_features=self.hidden_dim,
+            initializer=self.initializer,
+        )
+      elif self.probe_type == "attentive":
+        self.projection = AttentiveProbe(
+            in_channels=self.latent_dim,
+            out_features=self.hidden_dim,
+            initializer=self.initializer,
+        )
+      else:
+        raise NotImplementedError(f"Unsupported probe_type {self.probe_type}")
       self.projection_out_dim = self.hidden_dim
       self.predictor = nn.Linear(self.hidden_dim, self.hidden_dim)
       _apply_initializer(self.predictor, self.initializer)
@@ -477,7 +598,20 @@ class RainbowDQNNetwork(nn.Module):
   def project(self, x: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
     self._ensure_head(x.shape[-1], x.device)
     assert self.projection is not None
+    if self.probe_type != "flatten":
+      raise ValueError("project() only accepts flat features for probe_type='flatten'.")
     return self.projection(x, eval_mode=eval_mode)
+
+  def project_latent(self, latent: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+    representation_dim = self.flatten_spatial_latent(latent).shape[-1]
+    self._ensure_head(representation_dim, latent.device)
+    assert self.projection is not None
+    if self.probe_type == "attentive":
+      return self.projection(latent, eval_mode=eval_mode)
+    return self.projection(
+        self.flatten_spatial_latent(latent),
+        eval_mode=eval_mode,
+    )
 
   def encode_project(
       self,
@@ -495,11 +629,15 @@ class RainbowDQNNetwork(nn.Module):
       *,
       eval_mode: bool = False,
   ) -> torch.Tensor:
-    representation = self.flatten_spatial_latent(latent)
-    return self.project(representation, eval_mode=eval_mode)
+    return self.project_latent(latent, eval_mode=eval_mode)
 
   def spr_predict(self, x: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
     projected = self.project(x, eval_mode=eval_mode)
+    assert self.predictor is not None
+    return self.predictor(projected)
+
+  def spr_predict_from_latent(self, latent: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+    projected = self.project_latent(latent, eval_mode=eval_mode)
     assert self.predictor is not None
     return self.predictor(projected)
 
@@ -507,8 +645,7 @@ class RainbowDQNNetwork(nn.Module):
     _, pred_latents = self.transition_model(latent, actions)
     batch, time, channels, height, width = pred_latents.shape
     flat = pred_latents.reshape(batch * time, channels, height, width)
-    reps = self.flatten_spatial_latent(flat)
-    preds = self.spr_predict(reps, eval_mode=True)
+    preds = self.spr_predict_from_latent(flat, eval_mode=True)
     return preds.reshape(batch, time, -1)
 
   def forward(
@@ -540,7 +677,7 @@ class RainbowDQNNetwork(nn.Module):
       eval_mode: bool = False,
   ) -> SPRNetworkOutput:
     representation = self.flatten_spatial_latent(latent)
-    projected = self.project(representation, eval_mode=eval_mode)
+    projected = self.project_latent(latent, eval_mode=eval_mode)
     projected = F.relu(projected)
     assert self.head is not None
     logits = self.head(projected, eval_mode=eval_mode)
@@ -646,7 +783,7 @@ class SACRainbowDQNNetwork(RainbowDQNNetwork):
     assert self.policy_projection is not None
     return torch.cat(
         [
-            self.project(representation, eval_mode=eval_mode),
+            self.project_latent(latent, eval_mode=eval_mode),
             self.policy_projection(representation, eval_mode=eval_mode),
         ],
         dim=-1,
@@ -661,6 +798,20 @@ class SACRainbowDQNNetwork(RainbowDQNNetwork):
         [
             self.predictor(self.project(x, eval_mode=eval_mode)),
             self.predict_policy(self.policy_projection(x, eval_mode=eval_mode)),
+        ],
+        dim=-1,
+    )
+
+  def spr_predict_from_latent(self, latent: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
+    representation = self.flatten_spatial_latent(latent)
+    self._ensure_head(representation.shape[-1], representation.device)
+    assert self.predictor is not None
+    assert self.policy_projection is not None
+    assert self.predict_policy is not None
+    return torch.cat(
+        [
+            self.predictor(self.project_latent(latent, eval_mode=eval_mode)),
+            self.predict_policy(self.policy_projection(representation, eval_mode=eval_mode)),
         ],
         dim=-1,
     )
