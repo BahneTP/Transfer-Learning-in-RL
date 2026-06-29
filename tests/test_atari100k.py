@@ -482,6 +482,35 @@ def test_lora_mode_trains_only_encoder_adapters_and_heads():
     assert metrics["priorities"].shape == (2,)
 
 
+def test_lora_adapters_follow_agent_device_for_action_selection():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="resnet18",
+        transfer_mode="lora",
+        hidden_dim=128,
+        lora_rank=4,
+        min_replay_history=0,
+        device=device,
+    )
+    agent = DERAgent(config, seed=37)
+    lora_parameters = [
+        parameter
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if ".lora_" in name
+    ]
+
+    assert lora_parameters
+    assert {parameter.device.type for parameter in lora_parameters} == {agent.device.type}
+    action = agent.select_action(
+        np.random.randint(0, 256, (84, 84, 4), dtype=np.uint8),
+        eval_mode=False,
+    )
+    assert action.device.type == agent.device.type
+
+
 def test_static_transfer_metrics_include_parameter_counts():
     from src.algorithms.atari100k.algorithm import Atari100KAlgorithm
     from src.algorithms.atari100k.der import DERAgent, DERConfig

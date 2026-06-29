@@ -199,6 +199,7 @@ class DERAgent:
     )
     if replacements == 0:
       raise ValueError("LoRA transfer mode found no encoder Linear or Conv2d layers.")
+    network.encoder.to(self.device)
 
   def _set_lora_encoder_trainable(self, network: RainbowDQNNetwork) -> None:
     for name, parameter in network.encoder.named_parameters():
