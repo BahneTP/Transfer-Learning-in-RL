@@ -13,16 +13,16 @@ case "${ALGO}" in
   der|spr|sr_spr|bbf|sac_bbf) ;;
   *)
     echo "Unsupported algorithm: ${ALGO}" >&2
-    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [assault|bankheist|roadrunner|breakout|hero] [gpu_id] [seed] [run_root]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [assault|bankheist|roadrunner|breakout|hero|jamesbond] [gpu_id] [seed] [run_root]" >&2
     exit 2
     ;;
 esac
 
 case "${GAME}" in
-  assault|bankheist|roadrunner|breakout|hero) ;;
+  assault|bankheist|roadrunner|breakout|hero|jamesbond) ;;
   *)
     echo "Unsupported game: ${GAME}" >&2
-    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [assault|bankheist|roadrunner|breakout|hero] [gpu_id] [seed] [run_root]" >&2
+    echo "Usage: $0 [der|spr|sr_spr|bbf|sac_bbf] [assault|bankheist|roadrunner|breakout|hero|jamesbond] [gpu_id] [seed] [run_root]" >&2
     exit 2
     ;;
 esac

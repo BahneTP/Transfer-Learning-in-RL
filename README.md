@@ -25,11 +25,13 @@ python src/train.py experiment=atari100k/der/bankheist
 python src/train.py experiment=atari100k/der/roadrunner
 python src/train.py experiment=atari100k/der/breakout
 python src/train.py experiment=atari100k/der/hero
+python src/train.py experiment=atari100k/der/jamesbond
 python src/train.py experiment=atari100k/bbf/assault
 python src/train.py experiment=atari100k/bbf/bankheist
 python src/train.py experiment=atari100k/bbf/roadrunner
 python src/train.py experiment=atari100k/bbf/breakout
 python src/train.py experiment=atari100k/bbf/hero
+python src/train.py experiment=atari100k/bbf/jamesbond
 ```
 
 ## Atari 100K Transfer Learning
@@ -101,7 +103,7 @@ Available Atari environment configs now include:
 
 - `pong_train` / `pong_eval`
 - generic `atari100k_train` / `atari100k_eval` for Assault, BankHeist,
-  RoadRunner, Breakout, and Hero via `atari.game`
+  RoadRunner, Breakout, Hero, and Jamesbond via `atari.game`
 
 ## Reproducibility
 

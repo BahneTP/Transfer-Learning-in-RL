@@ -20,6 +20,7 @@ Implemented experiments:
 | DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/RoadRunner-v5 | `experiment=atari100k/<algo>/roadrunner` |
 | DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Breakout-v5 | `experiment=atari100k/<algo>/breakout` |
 | DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Hero-v5 | `experiment=atari100k/<algo>/hero` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Jamesbond-v5 | `experiment=atari100k/<algo>/jamesbond` |
 
 Other algorithms will follow.
 
@@ -402,7 +403,7 @@ configs/
   experiment/dqn/pong.yaml     — composed Atari Pong experiment
   experiment/ddpg/halfcheetah.yaml — composed DDPG HalfCheetah experiment
   experiment/a2c/halfcheetah.yaml — composed A2C HalfCheetah experiment
-  experiment/atari100k/{der,spr,sr_spr,bbf,sac_bbf}/{assault,bankheist,roadrunner,breakout,hero}.yaml
+  experiment/atari100k/{der,spr,sr_spr,bbf,sac_bbf}/{assault,bankheist,roadrunner,breakout,hero,jamesbond}.yaml
   experiment/atari100k/{der,bbf}/*_resnet_{full,linear,attentive,lora}.yaml
   logger/{wandb,tensorboard}.yaml
   paths/default.yaml

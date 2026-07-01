@@ -37,11 +37,13 @@ python src/train.py experiment=atari100k/der/bankheist
 python src/train.py experiment=atari100k/der/roadrunner
 python src/train.py experiment=atari100k/der/breakout
 python src/train.py experiment=atari100k/der/hero
+python src/train.py experiment=atari100k/der/jamesbond
 python src/train.py experiment=atari100k/bbf/assault
 python src/train.py experiment=atari100k/bbf/bankheist
 python src/train.py experiment=atari100k/bbf/roadrunner
 python src/train.py experiment=atari100k/bbf/breakout
 python src/train.py experiment=atari100k/bbf/hero
+python src/train.py experiment=atari100k/bbf/jamesbond
 ```
 
 ## Known Framework Differences From `BBF-pytorch`

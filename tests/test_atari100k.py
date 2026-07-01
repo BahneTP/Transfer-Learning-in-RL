@@ -21,13 +21,14 @@ BASE_OVERRIDES = [
     "hydra.run.dir=/tmp/atari100k_smoke_tests",
 ]
 
-ATARI100K_GAMES = ["assault", "bankheist", "roadrunner", "breakout", "hero"]
+ATARI100K_GAMES = ["assault", "bankheist", "roadrunner", "breakout", "hero", "jamesbond"]
 ATARI100K_GAME_NAMES = {
     "assault": "Assault",
     "bankheist": "BankHeist",
     "roadrunner": "RoadRunner",
     "breakout": "Breakout",
     "hero": "Hero",
+    "jamesbond": "Jamesbond",
 }
 ATARI100K_ALGORITHMS = ["der", "spr", "sr_spr", "bbf", "sac_bbf"]
 ATARI100K_TRANSFER_MODES = ["full", "linear", "attentive", "lora"]
