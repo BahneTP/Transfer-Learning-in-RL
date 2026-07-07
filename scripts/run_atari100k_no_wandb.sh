@@ -45,7 +45,7 @@ mkdir -p "${OUT_DIR}"
     "trainer.devices=[${DEVICE}]" \
     "trainer.seed=${SEED}" \
     "logger=[]" \
-    "checkpoint.save_dir=${OUT_DIR}/checkpoints" \
+    "checkpoint.enabled=false" \
     "hydra.run.dir=${OUT_DIR}"
 
   echo

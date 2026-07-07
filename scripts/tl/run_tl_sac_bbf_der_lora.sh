@@ -42,7 +42,7 @@ run_one() {
     "trainer.devices=[${DEVICE}]"
     "trainer.seed=${seed}"
     "logger=[]"
-    "checkpoint.save_dir=${out_dir}/checkpoints"
+    "checkpoint.enabled=false"
     "hydra.run.dir=${out_dir}"
   )
   cmd+=("${overrides[@]}")

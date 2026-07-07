@@ -30,8 +30,8 @@ def build_callbacks(
 ) -> list:
     """Assemble the full callback list for a training run.
 
-    Always includes ProgressCallback and CheckpointCallback.
-    Logger callbacks are appended after.
+    Always includes ProgressCallback. CheckpointCallback is added only when
+    checkpoint.enabled is true. Logger callbacks are appended after.
 
     Args:
         trainer_cfg: trainer sub-config (contains total_frames, log_every_n_steps)
@@ -45,15 +45,16 @@ def build_callbacks(
     from src.callbacks.checkpoint import CheckpointCallback
     from src.callbacks.progress import ProgressCallback
 
-    checkpoint_cb = CheckpointCallback(
-        save_dir=checkpoint_cfg.save_dir,
-        save_every_n_steps=checkpoint_cfg.save_every_n_steps,
-        save_last=checkpoint_cfg.save_last,
-    )
-    checkpoint_cb.set_trainer(trainer)
+    callbacks = [ProgressCallback(total_steps=trainer_cfg.total_frames)]
 
-    return [
-        ProgressCallback(total_steps=trainer_cfg.total_frames),
-        checkpoint_cb,
-        *loggers,
-    ]
+    if checkpoint_cfg.get("enabled", True):
+        checkpoint_cb = CheckpointCallback(
+            save_dir=checkpoint_cfg.save_dir,
+            save_every_n_steps=checkpoint_cfg.save_every_n_steps,
+            save_last=checkpoint_cfg.save_last,
+        )
+        checkpoint_cb.set_trainer(trainer)
+        callbacks.append(checkpoint_cb)
+
+    callbacks.extend(loggers)
+    return callbacks
