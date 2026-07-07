@@ -3,6 +3,7 @@ set -euo pipefail
 
 DEVICE="${1:-0}"
 RUN_ROOT="${2:-$(pwd)/logs/tl}"
+RESUME_BATCH_DIR="${3:-${RESUME_BATCH_DIR:-}}"
 SEEDS=(${SEEDS:-1 2 3 4 5})
 GAMES=(jamesbond assault bankheist roadrunner)
 
@@ -10,14 +11,39 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-BATCH_NAME="tl_sac_bbf_der_lora_$(date +%Y-%m-%d_%H-%M-%S)"
-BATCH_DIR="${RUN_ROOT}/${BATCH_NAME}"
+if [[ -n "${RESUME_BATCH_DIR}" ]]; then
+  BATCH_DIR="${RESUME_BATCH_DIR}"
+  BATCH_NAME="$(basename "${BATCH_DIR}")"
+else
+  BATCH_NAME="tl_sac_bbf_der_lora_$(date +%Y-%m-%d_%H-%M-%S)"
+  BATCH_DIR="${RUN_ROOT}/${BATCH_NAME}"
+fi
 BATCH_LOG="${BATCH_DIR}/batch.log"
 BATCH_RESULTS="${BATCH_DIR}/batch.results.tsv"
 mkdir -p "${BATCH_DIR}"
 
-printf "group\tvariant\talgorithm\tgame\tseed\treturn_mean\treturn_std\treturn_min\treturn_max\tlog\n" \
-  > "${BATCH_RESULTS}"
+if [[ ! -f "${BATCH_RESULTS}" ]]; then
+  printf "group\tvariant\talgorithm\tgame\tseed\treturn_mean\treturn_std\treturn_min\treturn_max\tlog\n" \
+    > "${BATCH_RESULTS}"
+fi
+
+is_completed() {
+  local group="$1"
+  local variant="$2"
+  local algo="$3"
+  local game="$4"
+  local seed="$5"
+
+  awk -F '\t' \
+    -v group="${group}" \
+    -v variant="${variant}" \
+    -v algo="${algo}" \
+    -v game="${game}" \
+    -v seed="${seed}" \
+    'NR > 1 && $1 == group && $2 == variant && $3 == algo && $4 == game && $5 == seed && $6 != "NA" { found = 1 }
+     END { exit found ? 0 : 1 }' \
+    "${BATCH_RESULTS}"
+}
 
 run_one() {
   local group="$1"
@@ -32,8 +58,11 @@ run_one() {
   local run_name="${group}_${variant}_${algo}_${game}_seed${seed}"
   local out_dir="${BATCH_DIR}/${run_name}"
   local log_file="${out_dir}/train_eval.log"
-  mkdir -p "${out_dir}"
-  : > "${log_file}"
+
+  if is_completed "${group}" "${variant}" "${algo}" "${game}" "${seed}"; then
+    echo "Skipping completed run: ${group} | ${variant} | ${algo} | ${game} | seed ${seed}"
+    return
+  fi
 
   local cmd=(
     uv run python src/train.py
@@ -47,16 +76,21 @@ run_one() {
   )
   cmd+=("${overrides[@]}")
 
+  if [[ "${DRY_RUN:-0}" == "1" ]]; then
+    echo "Would run: ${group} | ${variant} | ${algo} | ${game} | seed ${seed}"
+    echo "Command: ${cmd[*]}"
+    return
+  fi
+
+  mkdir -p "${out_dir}"
+  : > "${log_file}"
+
   {
     echo "=== ${group} | ${variant} | ${algo} | ${game} | seed ${seed} ==="
     echo "Command: ${cmd[*]}"
     echo "Started at: $(date --iso-8601=seconds)"
     echo
-    if [[ "${DRY_RUN:-0}" == "1" ]]; then
-      echo "DRY_RUN=1, not executing."
-    else
-      "${cmd[@]}"
-    fi
+    "${cmd[@]}"
     echo
     echo "Finished at: $(date --iso-8601=seconds)"
   } 2>&1 | tee -a "${log_file}"
@@ -65,24 +99,25 @@ run_one() {
   local return_std="NA"
   local return_min="NA"
   local return_max="NA"
-  if [[ "${DRY_RUN:-0}" != "1" ]]; then
-    return_mean="$(awk '/eval\/return_mean:/ {print $2}' "${log_file}" | tail -n 1)"
-    return_std="$(awk '/eval\/return_std:/ {print $2}' "${log_file}" | tail -n 1)"
-    return_min="$(awk '/eval\/return_min:/ {print $2}' "${log_file}" | tail -n 1)"
-    return_max="$(awk '/eval\/return_max:/ {print $2}' "${log_file}" | tail -n 1)"
-  fi
+  return_mean="$(awk '/eval\/return_mean:/ {print $2}' "${log_file}" | tail -n 1)"
+  return_std="$(awk '/eval\/return_std:/ {print $2}' "${log_file}" | tail -n 1)"
+  return_min="$(awk '/eval\/return_min:/ {print $2}' "${log_file}" | tail -n 1)"
+  return_max="$(awk '/eval\/return_max:/ {print $2}' "${log_file}" | tail -n 1)"
   printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     "${group}" "${variant}" "${algo}" "${game}" "${seed}" \
     "${return_mean:-NA}" "${return_std:-NA}" "${return_min:-NA}" "${return_max:-NA}" "${log_file}" \
     >> "${BATCH_RESULTS}"
 }
 
-{
+main() {
   echo "Running TL batch 2: SAC-BBF normal and DER ResNet LoRA sweep"
   echo "GPU: ${DEVICE}"
   echo "Games: ${GAMES[*]}"
   echo "Seeds: ${SEEDS[*]}"
   echo "Batch directory: ${BATCH_DIR}"
+  if [[ -n "${RESUME_BATCH_DIR}" ]]; then
+    echo "Resume mode: skipping completed rows in ${BATCH_RESULTS}"
+  fi
   echo
 
   for game in "${GAMES[@]}"; do
@@ -113,4 +148,10 @@ run_one() {
   echo
   echo "Finished batch at: $(date --iso-8601=seconds)"
   echo "Results: ${BATCH_RESULTS}"
-} 2>&1 | tee -a "${BATCH_LOG}"
+}
+
+if [[ "${DRY_RUN:-0}" == "1" ]]; then
+  main
+else
+  main 2>&1 | tee -a "${BATCH_LOG}"
+fi
