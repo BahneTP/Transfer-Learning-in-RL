@@ -253,9 +253,12 @@ constructor defaults.
   and add a second `RewardSum` for that key. `StepTrainer` will then log
   `train/raw_reward` from `("next", "raw_episode_reward")` and keep the
   clipped metric under `train/clip_reward`.
-- `gym_kwargs`: optional dict forwarded straight to `GymEnv` (e.g.
-  `{"frame_skip": 4, "from_pixels": true, "pixels_only": false,
-  "categorical_action_encoding": true}` for Atari).
+- `gym_kwargs`: optional dict forwarded to `GymEnv`. When `gymnasium_wrappers`
+  is present, TorchRL-only keys such as `from_pixels`, `pixels_only`, and
+  `categorical_action_encoding` go to `GymWrapper`; the remaining keys go to
+  `gymnasium.make`.
+- `gymnasium_wrappers`: optional list of `_target_`-keyed gymnasium wrappers
+  applied between `gymnasium.make` and TorchRL's `GymWrapper`.
 - `gym_backend`: optional backend name (`"gymnasium"`); if set, the GymEnv
   construction is wrapped in `set_gym_backend(...)`.
 
@@ -276,10 +279,12 @@ gym_kwargs:
   from_pixels: true
   pixels_only: false
   categorical_action_encoding: true
+gymnasium_wrappers:
+  - _target_: src.environments.atari_wrappers.NoopResetEnv
+    noop_max: 30
+  - _target_: src.environments.atari_wrappers.MaxAndSkipEnv
+    skip: 4
 transforms:
-  - _target_: torchrl.envs.NoopResetEnv
-    noops: 30
-    random: true
   # ... (see configs/environment/pong_train.yaml for the full SOTA stack)
 ```
 
