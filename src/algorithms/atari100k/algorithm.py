@@ -142,6 +142,14 @@ class Atari100KAlgorithm(BaseAlgorithm):
         encoder_type: str = "dqn",
         hidden_dim: int = 512,
         width_scale: int = 1,
+        resnet18_weights: str | None = None,
+        resnet18_variant: str = "resnet_layer3_reduced",
+        transfer_mode: str = "none",
+        encoder_lr_scale: float = 1.0,
+        freeze_encoder_bn: bool = False,
+        lora_rank: int = 4,
+        lora_alpha: float = 8.0,
+        lora_dropout: float = 0.0,
         renormalize_output: bool = False,
         data_augmentation: bool = False,
         batches_to_group: int = 1,
@@ -165,6 +173,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
         reset_target: bool | None = None,
         target_action_selection: bool | None = None,
         match_online_target_rngs: bool | None = None,
+        protect_encoder_from_reset: bool | None = None,
         entropy_decay_period: int | None = None,
         entropy_initial_coef: float | None = None,
         entropy_final_coef: float | None = None,
@@ -204,6 +213,14 @@ class Atari100KAlgorithm(BaseAlgorithm):
             "encoder_type": encoder_type,
             "hidden_dim": hidden_dim,
             "width_scale": width_scale,
+            "resnet18_weights": resnet18_weights,
+            "resnet18_variant": resnet18_variant,
+            "transfer_mode": transfer_mode,
+            "encoder_lr_scale": encoder_lr_scale,
+            "freeze_encoder_bn": freeze_encoder_bn,
+            "lora_rank": lora_rank,
+            "lora_alpha": lora_alpha,
+            "lora_dropout": lora_dropout,
             "renormalize_output": renormalize_output,
             "data_augmentation": data_augmentation,
             "batches_to_group": batches_to_group,
@@ -233,6 +250,7 @@ class Atari100KAlgorithm(BaseAlgorithm):
             "reset_target": reset_target,
             "target_action_selection": target_action_selection,
             "match_online_target_rngs": match_online_target_rngs,
+            "protect_encoder_from_reset": protect_encoder_from_reset,
             "entropy_decay_period": entropy_decay_period,
             "entropy_initial_coef": entropy_initial_coef,
             "entropy_final_coef": entropy_final_coef,
@@ -466,7 +484,6 @@ class Atari100KAlgorithm(BaseAlgorithm):
 
     def _replay_update_horizon(self, config: ConfigT) -> int:
         return int(getattr(config, "max_update_horizon", config.update_horizon))
-
 
 class DERAlgorithm(Atari100KAlgorithm):
     agent_cls = DERAgent

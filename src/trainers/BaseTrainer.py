@@ -140,7 +140,7 @@ class BaseTrainer(ABC):
         policy = self.algorithm.get_policy()
 
         returns: list[float] = []
-        with torch.no_grad(), set_exploration_type(ExplorationType.MODE):
+        with torch.no_grad(), set_exploration_type(ExplorationType.DETERMINISTIC):
             for _ in range(num_episodes):
                 td = eval_env.reset()
                 episode_return = 0.0

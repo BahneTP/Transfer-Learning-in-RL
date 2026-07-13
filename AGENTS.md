@@ -15,24 +15,20 @@ Implemented experiments:
 | DQN       | ALE/Pong-v5    | `experiment=dqn/pong`         |
 | DDPG      | HalfCheetah-v4 | `experiment=ddpg/halfcheetah` |
 | A2C       | HalfCheetah-v4 | `experiment=a2c/halfcheetah`  |
-| DER       | ALE/Qbert-v5   | `experiment=atari100k/der/qbert` |
-| DER       | ALE/BattleZone-v5 | `experiment=atari100k/der/battlezone` |
-| SPR       | ALE/Qbert-v5   | `experiment=atari100k/spr/qbert` |
-| SPR       | ALE/BattleZone-v5 | `experiment=atari100k/spr/battlezone` |
-| SR-SPR    | ALE/Qbert-v5   | `experiment=atari100k/sr_spr/qbert` |
-| SR-SPR    | ALE/BattleZone-v5 | `experiment=atari100k/sr_spr/battlezone` |
-| BBF       | ALE/Qbert-v5   | `experiment=atari100k/bbf/qbert` |
-| BBF       | ALE/BattleZone-v5 | `experiment=atari100k/bbf/battlezone` |
-| SAC-BBF   | ALE/Qbert-v5   | `experiment=atari100k/sac_bbf/qbert` |
-| SAC-BBF   | ALE/BattleZone-v5 | `experiment=atari100k/sac_bbf/battlezone` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Assault-v5 | `experiment=atari100k/<algo>/assault` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/BankHeist-v5 | `experiment=atari100k/<algo>/bankheist` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/RoadRunner-v5 | `experiment=atari100k/<algo>/roadrunner` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Breakout-v5 | `experiment=atari100k/<algo>/breakout` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Hero-v5 | `experiment=atari100k/<algo>/hero` |
+| DER/SPR/SR-SPR/BBF/SAC-BBF | ALE/Jamesbond-v5 | `experiment=atari100k/<algo>/jamesbond` |
 
 Other algorithms will follow.
 
 Available Atari environment config pairs:
 
 - `pong_train` / `pong_eval`
-- `qbert_train` / `qbert_eval`
-- `battlezone_train` / `battlezone_eval`
+- generic `atari100k_train` / `atari100k_eval` with `atari.game` set by the
+  experiment config
 
 ## Design principles
 
@@ -58,6 +54,41 @@ Available Atari environment config pairs:
    algorithm with `hydra.utils.instantiate(cfg.algorithm, device=None)`** so those
    nested configs become real callables. Plain `OmegaConf.to_container` + `**kwargs`
    would pass dicts instead of partials.
+
+## Atari 100K transfer-learning knobs
+
+Atari 100K DER/SPR/SR-SPR/BBF/SAC-BBF use a local hard port under
+`src/algorithms/atari100k`. Transfer-learning choices are algorithm
+hyperparameters because they affect reward and sample efficiency. Keep them on
+the Atari 100K algorithm constructor/configs, not on `trainer:` or
+`environment:`.
+
+Public knobs:
+
+- `encoder_type`: `dqn`, `impala`, or `resnet18`.
+- `resnet18_weights`: `null` for random init, or torchvision names such as
+  `DEFAULT` for ImageNet-pretrained weights.
+- `resnet18_variant`: `resnet_full`, `resnet_layer3_flattened`, or
+  `resnet_layer3_reduced`.
+- `transfer_mode`: `none`, `full_finetune`, `linear_probe`,
+  `attentive_probe`, or `lora`.
+- `encoder_lr_scale`: multiplier on the base algorithm learning rate for
+  encoder parameters.
+- `freeze_encoder_bn`: keeps encoder BatchNorm layers in eval mode and freezes
+  their affine parameters.
+- `lora_rank`, `lora_alpha`, `lora_dropout`: LoRA adapter hyperparameters used
+  by `transfer_mode=lora`.
+- `protect_encoder_from_reset`: BBF-family reset protection that removes
+  `encoder` from shrink/perturb while leaving the rest of reset logic intact.
+
+The default `transfer_mode: none` preserves the original DER/SAC-BBF behavior. For
+linear and attentive probing, freeze the encoder and train only the probe/head
+parameters. For LoRA, freeze the encoder base weights and train only
+`lora_down`/`lora_up` adapter weights plus the probe/head parameters. For SAC-BBF
+transfer experiments, set `protect_encoder_from_reset=true` unless the
+experiment intentionally studies reset perturbation of transferred encoders.
+Transfer settings are kept in the resolved Hydra config and, when enabled,
+the W&B run config. They are not duplicated as `train/*` metrics.
 
 ## Algorithm constructor pattern
 
@@ -371,7 +402,8 @@ configs/
   experiment/dqn/pong.yaml     — composed Atari Pong experiment
   experiment/ddpg/halfcheetah.yaml — composed DDPG HalfCheetah experiment
   experiment/a2c/halfcheetah.yaml — composed A2C HalfCheetah experiment
-  experiment/atari100k/{der,spr,bbf}/{qbert,battlezone}.yaml
+  experiment/atari100k/{der,spr,sr_spr,bbf,sac_bbf}/{assault,bankheist,roadrunner,breakout,hero,jamesbond}.yaml
+  experiment/atari100k/{der,bbf}/*_resnet_{full,linear,attentive,lora}.yaml
   logger/{wandb,tensorboard}.yaml
   paths/default.yaml
   train.yaml, eval.yaml
@@ -403,8 +435,7 @@ Example: `$Q(s, a; \theta)$`, `$\theta_{\text{target}}$`.
 5. Add `src/algorithms/my_algo/README.md` with theory, pseudocode, implementation
    mapping, and an experimental-results table (link to
    [W&B project table](https://wandb.ai/LatentLab/torchrl-hydra-template/table)).
-   Tag benchmark W&B runs with `template`; refresh the table via
-   `python scripts/update_algo_results.py`. Use `$...$` for inline math (see
+   Tag benchmark W&B runs with `template`. Use `$...$` for inline math (see
    [Documentation](#documentation)).
 6. **Update `README.md` and `AGENTS.md`.**
 7. Add a smoke test in `tests/test_smoke.py`.
@@ -426,9 +457,8 @@ python src/train.py experiment=dqn/cartpole 'logger=[wandb]'  # experiments defa
 python src/train.py experiment=dqn/pong            # Atari Pong (40M frames, GPU)
 python src/train.py experiment=ddpg/halfcheetah    # DDPG continuous control (1M frames)
 python src/train.py experiment=a2c/halfcheetah     # A2C on-policy continuous control (1M frames)
-python src/train.py experiment=atari100k/der/qbert
-python src/train.py experiment=atari100k/spr/battlezone
-python src/train.py experiment=atari100k/bbf/qbert
-python scripts/update_algo_results.py              # refresh algo README benchmark tables (W&B tag: template)
+python src/train.py experiment=atari100k/der/assault
+python src/train.py experiment=atari100k/spr/breakout
+python src/train.py experiment=atari100k/sac_bbf/hero_resnet_lora
 pytest tests/test_smoke.py -v
 ```

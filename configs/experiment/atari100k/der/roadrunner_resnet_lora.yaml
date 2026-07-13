@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/der/roadrunner
+  - _self_
+
+algorithm:
+  encoder_type: resnet18
+  resnet18_weights: DEFAULT
+  resnet18_variant: resnet_layer3_flattened
+  transfer_mode: lora
+  lora_rank: 4
+  lora_alpha: 8.0
+  freeze_encoder_bn: true
+  learning_rate: 1e-5
+  encoder_lr_scale: 1.0

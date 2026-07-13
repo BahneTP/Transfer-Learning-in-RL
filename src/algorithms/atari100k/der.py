@@ -15,6 +15,9 @@ from src.algorithms.atari100k.networks import RainbowDQNNetwork
 from src.algorithms.atari100k.rl import categorical_target
 from src.algorithms.atari100k.rl import linearly_decaying_epsilon
 from src.algorithms.atari100k.rl import select_actions
+from src.algorithms.atari100k.transfer_learning import LoRAConv2d
+from src.algorithms.atari100k.transfer_learning import LoRALinear
+from src.algorithms.atari100k.transfer_learning import apply_lora_adapters
 
 
 @dataclasses.dataclass
@@ -45,6 +48,14 @@ class DERConfig:
   encoder_type: str = "dqn"
   hidden_dim: int = 512
   width_scale: int = 1
+  resnet18_weights: str | None = None
+  resnet18_variant: str = "resnet_layer3_reduced"
+  transfer_mode: str = "none"
+  encoder_lr_scale: float = 1.0
+  freeze_encoder_bn: bool = False
+  lora_rank: int = 4
+  lora_alpha: float = 8.0
+  lora_dropout: float = 0.0
   renormalize_output: bool = False
   data_augmentation: bool = False
   batches_to_group: int = 1
@@ -76,6 +87,7 @@ class DERAgent:
     self.online_network = self._make_network().to(self.device)
     self.target_network = self._make_network().to(self.device)
     self._build_lazy_modules()
+    self._configure_transfer()
     self.target_network.load_state_dict(self.online_network.state_dict())
     self.target_network.eval()
     self.optimizer = self._make_optimizer()
@@ -90,26 +102,141 @@ class DERAgent:
         encoder_type=self.config.encoder_type,  # type: ignore[arg-type]
         hidden_dim=self.config.hidden_dim,
         width_scale=self.config.width_scale,
+        resnet18_weights=self.config.resnet18_weights,
+        resnet18_variant=self.config.resnet18_variant,  # type: ignore[arg-type]
+        probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
     )
 
+  def _network_probe_type(self) -> str:
+    if self.config.transfer_mode == "attentive_probe":
+      return "attentive"
+    return "flatten"
+
   def _make_optimizer(self) -> torch.optim.Optimizer:
-    decay_params = []
-    no_decay_params = []
-    for parameter in self.online_network.parameters():
-      if parameter.ndim == 1:
-        no_decay_params.append(parameter)
-      else:
-        decay_params.append(parameter)
+    parameter_groups = self._optimizer_parameter_groups(
+        base_lr=self.config.learning_rate,
+        encoder_lr=self.config.learning_rate * self.config.encoder_lr_scale,
+    )
     return torch.optim.AdamW(
-        [
-            {"params": decay_params, "weight_decay": self.config.weight_decay},
-            {"params": no_decay_params, "weight_decay": 0.0},
-        ],
+        parameter_groups,
         lr=self.config.learning_rate,
         eps=self.config.adam_eps,
     )
+
+  def _optimizer_parameter_groups(
+      self,
+      *,
+      base_lr: float,
+      encoder_lr: float,
+  ) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, bool], list[nn.Parameter]] = {
+        ("encoder", True): [],
+        ("encoder", False): [],
+        ("head", True): [],
+        ("head", False): [],
+    }
+    for name, parameter in self.online_network.named_parameters():
+      if not parameter.requires_grad:
+        continue
+      bucket = "encoder" if name.startswith("encoder.") else "head"
+      has_weight_decay = parameter.ndim != 1
+      groups[(bucket, has_weight_decay)].append(parameter)
+
+    parameter_groups: list[dict[str, Any]] = []
+    for bucket, lr in (("encoder", encoder_lr), ("head", base_lr)):
+      for has_weight_decay in (True, False):
+        params = groups[(bucket, has_weight_decay)]
+        if not params:
+          continue
+        parameter_groups.append({
+            "params": params,
+            "lr": lr,
+            "weight_decay": self.config.weight_decay if has_weight_decay else 0.0,
+        })
+    if not parameter_groups:
+      raise ValueError("No trainable parameters remain after applying transfer settings.")
+    return parameter_groups
+
+  def _configure_transfer(self) -> None:
+    if self.config.transfer_mode not in {
+        "none",
+        "full_finetune",
+        "linear_probe",
+        "attentive_probe",
+        "lora",
+      }:
+      raise ValueError(f"Unsupported transfer_mode={self.config.transfer_mode!r}")
+    self._configure_network_transfer(self.online_network)
+    self._configure_network_transfer(self.target_network)
+
+  def _configure_network_transfer(self, network: RainbowDQNNetwork) -> None:
+    if self.config.transfer_mode == "lora":
+      self._install_lora_adapters(network)
+      self._set_lora_encoder_trainable(network)
+      if self.config.freeze_encoder_bn:
+        self._freeze_encoder_batch_norm(network)
+      return
+    freeze_encoder = (
+        self.config.transfer_mode in {"linear_probe", "attentive_probe"}
+        or self.config.encoder_lr_scale <= 0.0
+    )
+    if freeze_encoder:
+      self._set_encoder_trainable(network, trainable=False)
+      if self.config.transfer_mode in {"linear_probe", "attentive_probe"}:
+        self._set_reducer_trainable(network, trainable=True)
+    if self.config.freeze_encoder_bn:
+      self._freeze_encoder_batch_norm(network)
+
+  def _install_lora_adapters(self, network: RainbowDQNNetwork) -> None:
+    if self._has_lora_adapters(network):
+      return
+    replacements = apply_lora_adapters(
+        network.encoder,
+        rank=self.config.lora_rank,
+        alpha=self.config.lora_alpha,
+        dropout=self.config.lora_dropout,
+    )
+    if replacements == 0:
+      raise ValueError("LoRA transfer mode found no encoder Linear or Conv2d layers.")
+    network.encoder.to(self.device)
+
+  def _set_lora_encoder_trainable(self, network: RainbowDQNNetwork) -> None:
+    for name, parameter in network.encoder.named_parameters():
+      parameter.requires_grad = ".lora_" in name or name.startswith("lora_")
+
+  def _set_encoder_trainable(self, network: RainbowDQNNetwork, *, trainable: bool) -> None:
+    for parameter in network.encoder.parameters():
+      parameter.requires_grad = trainable
+
+  def _set_reducer_trainable(self, network: RainbowDQNNetwork, *, trainable: bool) -> None:
+    reducer = getattr(network.encoder, "reducer", None)
+    if reducer is None:
+      return
+    for parameter in reducer.parameters():
+      parameter.requires_grad = trainable
+
+  def _has_lora_adapters(self, network: RainbowDQNNetwork) -> bool:
+    return any(isinstance(module, (LoRALinear, LoRAConv2d)) for module in network.encoder.modules())
+
+  def _freeze_encoder_batch_norm(self, network: RainbowDQNNetwork) -> None:
+    for module in network.encoder.modules():
+      if isinstance(module, nn.modules.batchnorm._BatchNorm):
+        module.eval()
+        for parameter in module.parameters():
+          parameter.requires_grad = False
+
+  def _prepare_online_network_for_training(self) -> None:
+    self.online_network.train()
+    if self.config.freeze_encoder_bn:
+      self._freeze_encoder_batch_norm(self.online_network)
+
+  def _trainable_online_parameters(self) -> list[nn.Parameter]:
+    return [
+        parameter for parameter in self.online_network.parameters()
+        if parameter.requires_grad
+    ]
 
   def _build_lazy_modules(self) -> None:
     height, width = self.config.observation_shape
@@ -145,7 +272,7 @@ class DERAgent:
       )
 
   def train_step(self, batch: dict[str, Any]) -> dict[str, float | np.ndarray]:
-    self.online_network.train()
+    self._prepare_online_network_for_training()
     states = self._batch_tensor(batch["state"])[:, 0]
     next_states = self._batch_tensor(batch["next_state"])[:, 0]
     actions = self._batch_tensor(batch["action"]).long()[:, 0]
@@ -181,7 +308,7 @@ class DERAgent:
 
     self.optimizer.zero_grad(set_to_none=True)
     loss.backward()
-    grad_norm = nn.utils.clip_grad_norm_(self.online_network.parameters(), max_norm=10.0)
+    grad_norm = nn.utils.clip_grad_norm_(self._trainable_online_parameters(), max_norm=10.0)
     self.optimizer.step()
     self._maybe_update_target()
     self.gradient_steps += 1

@@ -55,17 +55,8 @@ results. Experimental metrics are tracked on
 | DDPG | [`src/algorithms/ddpg/README.md`](src/algorithms/ddpg/README.md) |
 | A2C | [`src/algorithms/a2c/README.md`](src/algorithms/a2c/README.md) |
 
-After new benchmark training runs, tag them with `template` on W&B and refresh
-the markdown tables in each algorithm README:
-
-```shell
-python scripts/update_algo_results.py              # rewrite tables from W&B
-python scripts/update_algo_results.py --dry-run    # preview without writing
-```
-
-Requires `wandb login` (or `WANDB_API_KEY`). By default the script reads finished
-runs tagged `template` from `LatentLab/torchrl-hydra-template`. Use
-`--entity`, `--project`, `--tag`, or `--algo dqn` to override scope.
+After new benchmark training runs, tag them with `template` on W&B before
+updating the markdown tables in each algorithm README.
 
 ## Main technologies
 

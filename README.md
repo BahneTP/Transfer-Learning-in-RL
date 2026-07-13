@@ -20,17 +20,80 @@ The framework includes Atari 100K ports for DER, SPR, SR-SPR, BBF, and SAC-BBF u
 `src/algorithms/atari100k`.
 
 ```shell
-python src/train.py experiment=atari100k/der/qbert
-python src/train.py experiment=atari100k/der/battlezone
-python src/train.py experiment=atari100k/spr/qbert
-python src/train.py experiment=atari100k/spr/battlezone
-python src/train.py experiment=atari100k/sr_spr/qbert
-python src/train.py experiment=atari100k/sr_spr/battlezone
-python src/train.py experiment=atari100k/bbf/qbert
-python src/train.py experiment=atari100k/bbf/battlezone
-python src/train.py experiment=atari100k/sac_bbf/qbert
-python src/train.py experiment=atari100k/sac_bbf/battlezone
+python src/train.py experiment=atari100k/der/assault
+python src/train.py experiment=atari100k/der/bankheist
+python src/train.py experiment=atari100k/der/roadrunner
+python src/train.py experiment=atari100k/der/breakout
+python src/train.py experiment=atari100k/der/hero
+python src/train.py experiment=atari100k/der/jamesbond
+python src/train.py experiment=atari100k/bbf/assault
+python src/train.py experiment=atari100k/bbf/bankheist
+python src/train.py experiment=atari100k/bbf/roadrunner
+python src/train.py experiment=atari100k/bbf/breakout
+python src/train.py experiment=atari100k/bbf/hero
+python src/train.py experiment=atari100k/bbf/jamesbond
 ```
+
+## Atari 100K Transfer Learning
+
+DER and SAC-BBF expose optional encoder transfer-learning
+knobs on the algorithm config. The default `transfer_mode: none` keeps the
+original random-initialized Atari 100K agents.
+
+ResNet-18 can be selected as an encoder while keeping the existing Atari replay,
+target, C51, and SPR code paths:
+
+```shell
+python src/train.py experiment=atari100k/der/assault algorithm.encoder_type=resnet18
+python src/train.py experiment=atari100k/der/assault_resnet_full
+```
+
+Transfer comparison modes:
+
+- `transfer_mode=full_finetune`: encoder, projection/probe, and heads train.
+  Use `encoder_lr_scale` to give the encoder a smaller learning rate.
+- `transfer_mode=linear_probe`: encoder is frozen; the flat projection and heads
+  train.
+- `transfer_mode=attentive_probe`: encoder is frozen; a trainable attention
+  pooling probe over spatial encoder features and the heads train.
+- `transfer_mode=lora`: encoder base weights are frozen; trainable low-rank
+  LoRA adapters are added to encoder convolution/linear layers, and the
+  projection/probe plus heads train.
+
+ResNet-18 variants are selected with `algorithm.resnet18_variant`:
+
+- `resnet_full`: layer4 output, `512x3x3`.
+- `resnet_layer3_flattened`: layer3 output, `256x6x6`.
+- `resnet_layer3_reduced`: layer3 output with trainable `1x1` reducer,
+  `64x6x6`.
+
+Example full fine-tuning run with a smaller encoder learning rate:
+
+```shell
+python src/train.py experiment=atari100k/der/assault \
+  algorithm.encoder_type=resnet18 \
+  algorithm.resnet18_weights=DEFAULT \
+  algorithm.transfer_mode=full_finetune \
+  algorithm.encoder_lr_scale=0.1 \
+  algorithm.freeze_encoder_bn=true
+```
+
+Example LoRA run:
+
+```shell
+python src/train.py experiment=atari100k/der/assault \
+  algorithm.encoder_type=resnet18 \
+  algorithm.resnet18_weights=DEFAULT \
+  algorithm.transfer_mode=lora \
+  algorithm.lora_rank=4 \
+  algorithm.lora_alpha=8.0
+```
+
+For SAC-BBF transfer runs, `algorithm.protect_encoder_from_reset=true` keeps the
+periodic reset/shrink-perturb machinery from perturbing the transferred encoder.
+
+Transfer settings are stored in the resolved Hydra config, and W&B receives
+that config at run start. They are not duplicated as `train/*` metrics.
 
 ## Logging note
 
@@ -43,8 +106,8 @@ can preserve a second, unclipped reward track for logging. In that setup:
 Available Atari environment configs now include:
 
 - `pong_train` / `pong_eval`
-- `qbert_train` / `qbert_eval`
-- `battlezone_train` / `battlezone_eval`
+- generic `atari100k_train` / `atari100k_eval` for Assault, BankHeist,
+  RoadRunner, Breakout, Hero, and Jamesbond via `atari.game`
 
 ## Reproducibility
 

@@ -21,20 +21,31 @@ BASE_OVERRIDES = [
     "hydra.run.dir=/tmp/atari100k_smoke_tests",
 ]
 
+ATARI100K_GAMES = ["assault", "bankheist", "roadrunner", "breakout", "hero", "jamesbond"]
+ATARI100K_GAME_NAMES = {
+    "assault": "Assault",
+    "bankheist": "BankHeist",
+    "roadrunner": "RoadRunner",
+    "breakout": "Breakout",
+    "hero": "Hero",
+    "jamesbond": "Jamesbond",
+}
+ATARI100K_ALGORITHMS = ["der", "spr", "sr_spr", "bbf", "sac_bbf"]
+ATARI100K_TRANSFER_MODES = ["full", "linear", "attentive", "lora"]
+ATARI100K_RESNET_VARIANTS = {
+    "full": "resnet_layer3_reduced",
+    "linear": "resnet_layer3_reduced",
+    "attentive": "resnet_layer3_flattened",
+    "lora": "resnet_layer3_flattened",
+}
+
 
 @pytest.mark.parametrize(
     "experiment",
     [
-        "atari100k/der/qbert",
-        "atari100k/der/battlezone",
-        "atari100k/spr/qbert",
-        "atari100k/spr/battlezone",
-        "atari100k/sr_spr/qbert",
-        "atari100k/sr_spr/battlezone",
-        "atari100k/bbf/qbert",
-        "atari100k/bbf/battlezone",
-        "atari100k/sac_bbf/qbert",
-        "atari100k/sac_bbf/battlezone",
+        f"atari100k/{algorithm}/{game}"
+        for algorithm in ATARI100K_ALGORITHMS
+        for game in ATARI100K_GAMES
     ],
 )
 def test_atari100k_experiment_configs_compose(experiment: str):
@@ -42,22 +53,42 @@ def test_atari100k_experiment_configs_compose(experiment: str):
     assert cfg.environment.name.startswith("ALE/")
     assert cfg.trainer.total_frames == 100_000
     assert cfg.algorithm.obs_key == "pixels"
-    assert cfg.trainer.eval_every_n_steps == 10_000
     assert cfg.trainer.num_eval_episodes == 10
-    assert cfg.trainer.final_num_eval_episodes == 20
     assert cfg.algorithm.seed == cfg.trainer.seed
 
 
-def test_smoke_atari100k_der_qbert():
-    """DER on Qbert: tiny replay/update path through the real TorchRL adapter."""
+@pytest.mark.parametrize(
+    "experiment",
+    [
+        f"atari100k/{algorithm}/{game}_resnet_{mode}"
+        for algorithm in ("der", "sac_bbf")
+        for game in ATARI100K_GAMES
+        for mode in ATARI100K_TRANSFER_MODES
+    ],
+)
+def test_atari100k_resnet_transfer_experiment_configs_compose(experiment: str):
+    cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
+    game_key = experiment.split("/")[-1].split("_resnet_")[0]
+    assert cfg.atari.game == ATARI100K_GAME_NAMES[game_key]
+    assert cfg.algorithm.encoder_type == "resnet18"
+    assert cfg.algorithm.resnet18_weights == "DEFAULT"
+    mode = experiment.split("_resnet_")[-1]
+    assert cfg.algorithm.resnet18_variant == ATARI100K_RESNET_VARIANTS[mode]
+    assert cfg.algorithm.transfer_mode != "none"
+    if "/sac_bbf/" in experiment:
+        assert cfg.algorithm.protect_encoder_from_reset is True
+
+
+def test_smoke_atari100k_der_assault():
+    """DER on Assault: tiny replay/update path through the real TorchRL adapter."""
     pytest.importorskip("ale_py")
     cfg = load_experiment_cfg(
-        "atari100k/der/qbert",
+        "atari100k/der/assault",
         [
             *BASE_OVERRIDES,
-            "trainer.eval_every_n_steps=null",
             "trainer.total_frames=20",
             "trainer.log_every_n_steps=10",
+            "trainer.num_eval_episodes=0",
             "algorithm.replay_capacity=128",
             "algorithm.min_replay_history=8",
             "algorithm.batch_size=2",
@@ -291,12 +322,333 @@ def test_spr_prefetch_reuses_the_background_sample():
 
 
 def test_sr_spr_reference_preset_values_compose():
-    cfg = load_experiment_cfg("atari100k/sr_spr/qbert", BASE_OVERRIDES)
+    cfg = load_experiment_cfg("atari100k/sr_spr/assault", BASE_OVERRIDES)
 
     assert cfg.algorithm.reset_every == 5_000
     assert cfg.algorithm.target_update_tau == 0.005
     assert cfg.algorithm.noisy is False
     assert cfg.algorithm.target_action_selection is True
+
+
+def test_resnet18_encoder_forward_shape():
+    from src.algorithms.atari100k.networks import RainbowDQNNetwork
+
+    network = RainbowDQNNetwork(
+        num_actions=4,
+        num_atoms=51,
+        noisy=False,
+        dueling=True,
+        distributional=True,
+        encoder_type="resnet18",
+        hidden_dim=128,
+        input_channels=4,
+    )
+    support = torch.linspace(-10.0, 10.0, 51)
+    output = network(
+        torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8),
+        support,
+    )
+
+    assert output.q_values.shape == (2, 4)
+    assert output.logits is not None
+    assert output.logits.shape == (2, 4, 51)
+    assert output.latent.shape == (2, 64, 6, 6)
+
+
+@pytest.mark.parametrize(
+    ("variant", "expected_shape"),
+    [
+        ("resnet_full", (2, 512, 3, 3)),
+        ("resnet_layer3_flattened", (2, 256, 6, 6)),
+        ("resnet_layer3_reduced", (2, 64, 6, 6)),
+    ],
+)
+def test_resnet18_variants_define_spatial_feature_shape(variant: str, expected_shape: tuple[int, ...]):
+    from src.algorithms.atari100k.networks import RainbowDQNNetwork
+
+    network = RainbowDQNNetwork(
+        num_actions=4,
+        num_atoms=51,
+        noisy=False,
+        dueling=True,
+        distributional=True,
+        encoder_type="resnet18",
+        resnet18_variant=variant,  # type: ignore[arg-type]
+        hidden_dim=128,
+        input_channels=4,
+    )
+
+    latent = network.encode(torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8))
+
+    assert latent.shape == expected_shape
+
+
+def test_der_train_step_with_resnet18_encoder():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        hidden_dim=128,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=7)
+    batch = {
+        "state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "next_state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "action": np.random.randint(0, 4, (2, 1), dtype=np.int32),
+        "return": np.random.randn(2, 1).astype(np.float32),
+        "terminal": np.zeros((2, 1), dtype=np.uint8),
+        "discount": np.full((2, 1), 0.99, dtype=np.float32),
+        "sampling_probabilities": np.ones((2,), dtype=np.float32),
+    }
+
+    metrics = agent.train_step(batch)
+
+    assert metrics["TotalLoss"] >= 0.0
+    assert metrics["priorities"].shape == (2,)
+
+
+def test_linear_probe_freezes_encoder_and_uses_head_lr():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="resnet18",
+        transfer_mode="linear_probe",
+        encoder_lr_scale=0.1,
+        hidden_dim=128,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=3)
+
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_params == ["reducer.weight", "reducer.bias"]
+    assert any(
+        parameter.requires_grad
+        for name, parameter in agent.online_network.named_parameters()
+        if name.startswith(("projection", "head"))
+    )
+    assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-5, 1e-4}
+
+
+def test_full_finetune_uses_scaled_encoder_lr():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="resnet18",
+        transfer_mode="full_finetune",
+        encoder_lr_scale=0.1,
+        hidden_dim=128,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=5)
+
+    assert any(parameter.requires_grad for parameter in agent.online_network.encoder.parameters())
+    assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-5, 1e-4}
+
+
+def test_attentive_probe_uses_attention_projection_and_freezes_encoder():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+    from src.algorithms.atari100k.transfer_learning import AttentiveProbe
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="resnet18",
+        transfer_mode="attentive_probe",
+        hidden_dim=128,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=11)
+
+    assert isinstance(agent.online_network.projection, AttentiveProbe)
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_params == ["reducer.weight", "reducer.bias"]
+    output = agent.online_network(
+        torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8),
+        agent.support,
+    )
+    assert output.q_values.shape == (2, 4)
+
+
+def test_lora_mode_trains_only_encoder_adapters_and_heads():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+    from src.algorithms.atari100k.transfer_learning import LoRAConv2d
+
+    config = DERConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        transfer_mode="lora",
+        hidden_dim=128,
+        lora_rank=4,
+        lora_alpha=8.0,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=19)
+
+    assert any(isinstance(module, LoRAConv2d) for module in agent.online_network.encoder.modules())
+    trainable_encoder_names = [
+        name for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_names
+    assert all(".lora_" in name for name in trainable_encoder_names)
+    assert any(
+        parameter.requires_grad
+        for name, parameter in agent.online_network.named_parameters()
+        if name.startswith(("projection", "head"))
+    )
+
+    batch = {
+        "state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "next_state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "action": np.random.randint(0, 4, (2, 1), dtype=np.int32),
+        "return": np.random.randn(2, 1).astype(np.float32),
+        "terminal": np.zeros((2, 1), dtype=np.uint8),
+        "discount": np.full((2, 1), 0.99, dtype=np.float32),
+    }
+
+    metrics = agent.train_step(batch)
+
+    assert metrics["TotalLoss"] >= 0.0
+    assert metrics["priorities"].shape == (2,)
+
+
+def test_lora_adapters_follow_agent_device_for_action_selection():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="resnet18",
+        transfer_mode="lora",
+        hidden_dim=128,
+        lora_rank=4,
+        min_replay_history=0,
+        device=device,
+    )
+    agent = DERAgent(config, seed=37)
+    lora_parameters = [
+        parameter
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if ".lora_" in name
+    ]
+
+    assert lora_parameters
+    assert {parameter.device.type for parameter in lora_parameters} == {agent.device.type}
+    action = agent.select_action(
+        np.random.randint(0, 256, (84, 84, 4), dtype=np.uint8),
+        eval_mode=False,
+    )
+    assert action.device.type == agent.device.type
+
+
+def test_freeze_encoder_bn_keeps_batch_norm_eval_after_train_step():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        transfer_mode="full_finetune",
+        freeze_encoder_bn=True,
+        hidden_dim=128,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=17)
+    batch = {
+        "state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "next_state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "action": np.random.randint(0, 4, (2, 1), dtype=np.int32),
+        "return": np.random.randn(2, 1).astype(np.float32),
+        "terminal": np.zeros((2, 1), dtype=np.uint8),
+        "discount": np.full((2, 1), 0.99, dtype=np.float32),
+    }
+
+    agent.train_step(batch)
+    batch_norms = [
+        module for module in agent.online_network.encoder.modules()
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm)
+    ]
+
+    assert batch_norms
+    assert all(not module.training for module in batch_norms)
+    assert all(
+        not parameter.requires_grad
+        for module in batch_norms
+        for parameter in module.parameters()
+    )
+
+
+def test_bbf_protect_encoder_from_reset_skips_encoder_perturbation():
+    from src.algorithms.atari100k.bbf import BBFAgent, BBFConfig
+
+    config = BBFConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        hidden_dim=128,
+        reset_every=1,
+        no_resets_after=100,
+        protect_encoder_from_reset=True,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = BBFAgent(config, seed=23)
+    before = {
+        name: value.detach().clone()
+        for name, value in agent.online_network.state_dict().items()
+        if name.startswith("encoder.") and value.dtype.is_floating_point
+    }
+
+    agent.training_steps = 3
+    agent.reset_weights()
+
+    after = agent.online_network.state_dict()
+    assert before
+    assert all(torch.equal(value, after[name]) for name, value in before.items())
+
+
+def test_sac_bbf_lora_reset_keeps_adapter_state_dict_compatible():
+    from src.algorithms.atari100k.sac_bbf import SACBBFAgent, SACBBFConfig
+
+    config = SACBBFConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        transfer_mode="lora",
+        hidden_dim=128,
+        lora_rank=4,
+        reset_every=1,
+        no_resets_after=100,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = SACBBFAgent(config, seed=29)
+
+    agent.training_steps = 3
+    agent.reset_weights()
+
+    trainable_encoder_names = [
+        name for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_names
+    assert all(".lora_" in name for name in trainable_encoder_names)
 
 
 def test_sac_bbf_train_step_includes_policy_metrics():

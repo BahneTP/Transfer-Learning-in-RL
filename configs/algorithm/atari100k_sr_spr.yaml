@@ -45,3 +45,4 @@ reset_noise: true
 reset_head: true
 reset_target: true
 target_action_selection: true
+protect_encoder_from_reset: false

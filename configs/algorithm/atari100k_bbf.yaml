@@ -40,3 +40,4 @@ shrink_perturb_keys: [encoder, transition_model]
 shrink_factor: 0.5
 perturb_factor: 0.5
 target_action_selection: true
+protect_encoder_from_reset: false
