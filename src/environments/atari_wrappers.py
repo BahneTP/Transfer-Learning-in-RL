@@ -101,18 +101,3 @@ class EpisodicLifeEnv(gym.Wrapper):
         if life_lost:
             terminated = True
         return observation, reward, terminated, truncated, info
-
-
-def wrap_atari(
-    env: gym.Env,
-    *,
-    noop_max: int = 30,
-    frame_skip: int = 4,
-    terminal_on_life_loss: bool,
-) -> gym.Env:
-    """Apply the BBF-pytorch Atari wrapper order."""
-    env = NoopResetEnv(env, noop_max=noop_max)
-    env = MaxAndSkipEnv(env, skip=frame_skip)
-    if terminal_on_life_loss:
-        env = EpisodicLifeEnv(env)
-    return env

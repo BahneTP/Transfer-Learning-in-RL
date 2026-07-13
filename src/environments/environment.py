@@ -19,8 +19,13 @@ class Environment:
         transforms: list of ``_target_``-keyed dicts; each is instantiated as
             a ``torchrl.envs.transforms`` object and composed on top of the
             base env. ``None`` or empty leaves the env un-transformed.
-        gym_kwargs: optional extra kwargs forwarded to ``GymEnv`` (e.g.
-            ``{"frame_skip": 4, "from_pixels": True}``).
+        gym_kwargs: optional extra kwargs for the base env. When
+            ``gymnasium_wrappers`` is also given, TorchRL-specific keys
+            (``from_pixels``, ``pixels_only``) are split off for
+            ``GymWrapper``; the rest go to ``gymnasium.make``.
+        gymnasium_wrappers: list of ``_target_``-keyed dicts for gymnasium
+            wrappers applied between ``gymnasium.make`` and TorchRL's
+            ``GymWrapper``.
         gym_backend: optional gym backend name (e.g. ``"gymnasium"``).
     """
 
@@ -29,16 +34,16 @@ class Environment:
         name: str,
         transforms: list | None = None,
         gym_kwargs: dict | None = None,
+        gymnasium_wrappers: list | None = None,
         gym_backend: str | None = None,
-        atari_preprocessing: dict | None = None,
         **_: object,
     ) -> None:
         self._factory_kwargs: dict = {
             "name": name,
             "transforms": transforms,
             "gym_kwargs": gym_kwargs,
+            "gymnasium_wrappers": gymnasium_wrappers,
             "gym_backend": gym_backend,
-            "atari_preprocessing": atari_preprocessing,
         }
 
     def make_env(
