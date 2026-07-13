@@ -68,10 +68,10 @@ Public knobs:
 - `encoder_type`: `dqn`, `impala`, or `resnet18`.
 - `resnet18_weights`: `null` for random init, or torchvision names such as
   `DEFAULT` for ImageNet-pretrained weights.
+- `resnet18_variant`: `resnet_full`, `resnet_layer3_flattened`, or
+  `resnet_layer3_reduced`.
 - `transfer_mode`: `none`, `full_finetune`, `linear_probe`,
   `attentive_probe`, or `lora`.
-- `probe_type`: `flatten` or `attentive`; `attentive_probe` forces the attentive
-  probe even when this remains at its default.
 - `encoder_lr_scale`: multiplier on the base algorithm learning rate for
   encoder parameters.
 - `freeze_encoder_bn`: keeps encoder BatchNorm layers in eval mode and freezes
@@ -81,15 +81,14 @@ Public knobs:
 - `protect_encoder_from_reset`: BBF-family reset protection that removes
   `encoder` from shrink/perturb while leaving the rest of reset logic intact.
 
-The default `transfer_mode: none` preserves the original DER/BBF behavior. For
+The default `transfer_mode: none` preserves the original DER/SAC-BBF behavior. For
 linear and attentive probing, freeze the encoder and train only the probe/head
 parameters. For LoRA, freeze the encoder base weights and train only
-`lora_down`/`lora_up` adapter weights plus the probe/head parameters. For BBF
+`lora_down`/`lora_up` adapter weights plus the probe/head parameters. For SAC-BBF
 transfer experiments, set `protect_encoder_from_reset=true` unless the
 experiment intentionally studies reset perturbation of transferred encoders.
-The Atari 100K adapter logs numeric transfer flags and parameter counts under
-`train/transfer_mode_*`, `train/encoder_type_*`, `train/params_*`, and
-`train/protect_encoder_from_reset` for W&B/CSV analysis.
+Transfer settings are kept in the resolved Hydra config and, when enabled,
+the W&B run config. They are not duplicated as `train/*` metrics.
 
 ## Algorithm constructor pattern
 
@@ -436,8 +435,7 @@ Example: `$Q(s, a; \theta)$`, `$\theta_{\text{target}}$`.
 5. Add `src/algorithms/my_algo/README.md` with theory, pseudocode, implementation
    mapping, and an experimental-results table (link to
    [W&B project table](https://wandb.ai/LatentLab/torchrl-hydra-template/table)).
-   Tag benchmark W&B runs with `template`; refresh the table via
-   `python scripts/update_algo_results.py`. Use `$...$` for inline math (see
+   Tag benchmark W&B runs with `template`. Use `$...$` for inline math (see
    [Documentation](#documentation)).
 6. **Update `README.md` and `AGENTS.md`.**
 7. Add a smoke test in `tests/test_smoke.py`.
@@ -461,7 +459,6 @@ python src/train.py experiment=ddpg/halfcheetah    # DDPG continuous control (1M
 python src/train.py experiment=a2c/halfcheetah     # A2C on-policy continuous control (1M frames)
 python src/train.py experiment=atari100k/der/assault
 python src/train.py experiment=atari100k/spr/breakout
-python src/train.py experiment=atari100k/bbf/hero_resnet_lora
-python scripts/update_algo_results.py              # refresh algo README benchmark tables (W&B tag: template)
+python src/train.py experiment=atari100k/sac_bbf/hero_resnet_lora
 pytest tests/test_smoke.py -v
 ```

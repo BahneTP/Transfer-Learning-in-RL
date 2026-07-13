@@ -36,7 +36,7 @@ python src/train.py experiment=atari100k/bbf/jamesbond
 
 ## Atari 100K Transfer Learning
 
-DER, SPR, SR-SPR, BBF, and SAC-BBF expose optional encoder transfer-learning
+DER and SAC-BBF expose optional encoder transfer-learning
 knobs on the algorithm config. The default `transfer_mode: none` keeps the
 original random-initialized Atari 100K agents.
 
@@ -60,6 +60,13 @@ Transfer comparison modes:
   LoRA adapters are added to encoder convolution/linear layers, and the
   projection/probe plus heads train.
 
+ResNet-18 variants are selected with `algorithm.resnet18_variant`:
+
+- `resnet_full`: layer4 output, `512x3x3`.
+- `resnet_layer3_flattened`: layer3 output, `256x6x6`.
+- `resnet_layer3_reduced`: layer3 output with trainable `1x1` reducer,
+  `64x6x6`.
+
 Example full fine-tuning run with a smaller encoder learning rate:
 
 ```shell
@@ -78,18 +85,15 @@ python src/train.py experiment=atari100k/der/assault \
   algorithm.encoder_type=resnet18 \
   algorithm.resnet18_weights=DEFAULT \
   algorithm.transfer_mode=lora \
-  algorithm.lora_rank=8 \
-  algorithm.lora_alpha=16.0
+  algorithm.lora_rank=4 \
+  algorithm.lora_alpha=8.0
 ```
 
-For BBF transfer runs, set `algorithm.protect_encoder_from_reset=true` to keep
-the periodic reset/shrink-perturb machinery from perturbing the transferred
-encoder.
+For SAC-BBF transfer runs, `algorithm.protect_encoder_from_reset=true` keeps the
+periodic reset/shrink-perturb machinery from perturbing the transferred encoder.
 
-Transfer runs also log numeric configuration and parameter-count metrics such
-as `train/transfer_mode_lora`, `train/encoder_type_resnet18`,
-`train/params_total`, `train/params_trainable`,
-`train/params_encoder_trainable`, and `train/params_lora_trainable`.
+Transfer settings are stored in the resolved Hydra config, and W&B receives
+that config at run start. They are not duplicated as `train/*` metrics.
 
 ## Logging note
 

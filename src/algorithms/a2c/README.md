@@ -18,7 +18,7 @@ epoch of mini-batches and the data is discarded.
   `frames_per_batch / mini_batch_size` mini-batches per iteration, sampled without
   replacement exactly once.
 - **Stochastic actor.** `TanhNormal` distribution over bounded actions; collection uses
-  `ExplorationType.RANDOM`, evaluation uses the distribution mode (deterministic).
+  `ExplorationType.RANDOM`, evaluation uses deterministic exploration.
 
 ## Pseudocode
 

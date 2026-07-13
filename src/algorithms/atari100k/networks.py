@@ -9,18 +9,15 @@ from typing import Literal
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torchvision.models import ResNet18_Weights
-from torchvision.models import resnet18
+
+from src.algorithms.atari100k.encoders import EncoderName
+from src.algorithms.atari100k.encoders import InitializerName
+from src.algorithms.atari100k.encoders import ResNet18Variant
+from src.algorithms.atari100k.encoders import make_encoder
+from src.algorithms.atari100k.transfer_learning import AttentiveProbe
+from src.algorithms.atari100k.encoders.base import apply_initializer
 
 
-InitializerName = Literal[
-    "xavier_uniform",
-    "xavier_normal",
-    "kaiming_uniform",
-    "kaiming_normal",
-    "orthogonal",
-]
-EncoderName = Literal["dqn", "impala", "resnet18"]
 ProbeName = Literal["flatten", "attentive"]
 
 
@@ -31,24 +28,6 @@ class SPRNetworkOutput:
   probabilities: torch.Tensor | None
   latent: torch.Tensor
   representation: torch.Tensor
-
-
-def _apply_initializer(module: nn.Module, initializer: InitializerName) -> None:
-  if isinstance(module, (nn.Conv2d, nn.Linear)):
-    if initializer == "xavier_uniform":
-      nn.init.xavier_uniform_(module.weight)
-    elif initializer == "xavier_normal":
-      nn.init.xavier_normal_(module.weight)
-    elif initializer == "kaiming_uniform":
-      nn.init.kaiming_uniform_(module.weight, nonlinearity="relu")
-    elif initializer == "kaiming_normal":
-      nn.init.kaiming_normal_(module.weight, nonlinearity="relu")
-    elif initializer == "orthogonal":
-      nn.init.orthogonal_(module.weight)
-    else:
-      raise NotImplementedError(f"Unsupported initializer: {initializer}")
-    if module.bias is not None:
-      nn.init.zeros_(module.bias)
 
 
 def renormalize(tensor: torch.Tensor) -> torch.Tensor:
@@ -170,7 +149,7 @@ class FeatureLayer(nn.Module):
       )
     else:
       self.net = nn.Linear(in_features, out_features)
-      _apply_initializer(self.net, initializer)
+      apply_initializer(self.net, initializer)
 
   def forward(self, x: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
     if self.noisy:
@@ -216,319 +195,6 @@ class LinearHead(nn.Module):
     return adv
 
 
-class AttentiveProbe(nn.Module):
-  """Small trainable attention pooling head over spatial encoder features."""
-
-  def __init__(
-      self,
-      *,
-      in_channels: int,
-      out_features: int,
-      initializer: InitializerName = "xavier_uniform",
-  ) -> None:
-    super().__init__()
-    self.query = nn.Parameter(torch.empty(in_channels))
-    self.value = nn.Linear(in_channels, out_features)
-    self.score = nn.Linear(in_channels, 1)
-    nn.init.normal_(self.query, std=1.0 / math.sqrt(in_channels))
-    _apply_initializer(self.value, initializer)
-    _apply_initializer(self.score, initializer)
-
-  def forward(self, spatial_latent: torch.Tensor, *, eval_mode: bool = False) -> torch.Tensor:
-    del eval_mode
-    tokens = spatial_latent.flatten(2).transpose(1, 2)
-    scores = self.score(tokens + self.query.view(1, 1, -1)).squeeze(-1)
-    weights = scores.softmax(dim=-1)
-    pooled = torch.sum(tokens * weights.unsqueeze(-1), dim=1)
-    return self.value(pooled)
-
-
-class LoRALinear(nn.Module):
-  """Low-rank adapter wrapper for a frozen linear layer."""
-
-  def __init__(
-      self,
-      base: nn.Linear,
-      *,
-      rank: int,
-      alpha: float,
-      dropout: float,
-      initializer: InitializerName = "xavier_uniform",
-  ) -> None:
-    super().__init__()
-    if rank <= 0:
-      raise ValueError("LoRA rank must be positive.")
-    self.base = base
-    for parameter in self.base.parameters():
-      parameter.requires_grad = False
-    self.lora_down = nn.Linear(base.in_features, rank, bias=False)
-    self.lora_up = nn.Linear(rank, base.out_features, bias=False)
-    self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-    self.scaling = alpha / rank
-    _apply_initializer(self.lora_down, initializer)
-    nn.init.zeros_(self.lora_up.weight)
-
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    return self.base(x) + self.lora_up(self.lora_down(self.dropout(x))) * self.scaling
-
-
-class LoRAConv2d(nn.Module):
-  """Low-rank adapter wrapper for a frozen 2D convolution."""
-
-  def __init__(
-      self,
-      base: nn.Conv2d,
-      *,
-      rank: int,
-      alpha: float,
-      dropout: float,
-      initializer: InitializerName = "xavier_uniform",
-  ) -> None:
-    super().__init__()
-    if rank <= 0:
-      raise ValueError("LoRA rank must be positive.")
-    if base.groups != 1:
-      raise ValueError("LoRAConv2d only supports groups=1 convolutions.")
-    self.base = base
-    for parameter in self.base.parameters():
-      parameter.requires_grad = False
-    self.lora_down = nn.Conv2d(
-        base.in_channels,
-        rank,
-        kernel_size=base.kernel_size,
-        stride=base.stride,
-        padding=base.padding,
-        dilation=base.dilation,
-        bias=False,
-    )
-    self.lora_up = nn.Conv2d(rank, base.out_channels, kernel_size=1, bias=False)
-    self.dropout = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
-    self.scaling = alpha / rank
-    _apply_initializer(self.lora_down, initializer)
-    nn.init.zeros_(self.lora_up.weight)
-
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    return self.base(x) + self.lora_up(self.lora_down(self.dropout(x))) * self.scaling
-
-
-def apply_lora_adapters(
-    module: nn.Module,
-    *,
-    rank: int,
-    alpha: float,
-    dropout: float,
-    initializer: InitializerName = "xavier_uniform",
-) -> int:
-  """Recursively replace Linear/Conv2d children with frozen LoRA wrappers."""
-
-  replacements = 0
-  for name, child in list(module.named_children()):
-    if isinstance(child, (LoRALinear, LoRAConv2d)):
-      continue
-    if isinstance(child, nn.Linear):
-      setattr(
-          module,
-          name,
-          LoRALinear(
-              child,
-              rank=rank,
-              alpha=alpha,
-              dropout=dropout,
-              initializer=initializer,
-          ),
-      )
-      replacements += 1
-    elif isinstance(child, nn.Conv2d):
-      setattr(
-          module,
-          name,
-          LoRAConv2d(
-              child,
-              rank=rank,
-              alpha=alpha,
-              dropout=dropout,
-              initializer=initializer,
-          ),
-      )
-      replacements += 1
-    else:
-      replacements += apply_lora_adapters(
-          child,
-          rank=rank,
-          alpha=alpha,
-          dropout=dropout,
-          initializer=initializer,
-      )
-  return replacements
-
-
-class RainbowCNN(nn.Module):
-  def __init__(
-      self,
-      *,
-      width_scale: int = 1,
-      initializer: InitializerName = "xavier_uniform",
-  ) -> None:
-    super().__init__()
-    dims = [int(dim * width_scale) for dim in (32, 64, 64)]
-    self.layers = nn.Sequential(
-        nn.Conv2d(4, dims[0], kernel_size=8, stride=4),
-        nn.ReLU(),
-        nn.Conv2d(dims[0], dims[1], kernel_size=4, stride=2),
-        nn.ReLU(),
-        nn.Conv2d(dims[1], dims[2], kernel_size=3, stride=1),
-        nn.ReLU(),
-    )
-    self.output_channels = dims[-1]
-    self.apply(lambda module: _apply_initializer(module, initializer))
-
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    return self.layers(x)
-
-
-class ResidualStage(nn.Module):
-  def __init__(
-      self,
-      in_channels: int,
-      out_channels: int,
-      *,
-      num_blocks: int = 2,
-      use_max_pooling: bool = True,
-      dropout: float = 0.0,
-      initializer: InitializerName = "xavier_uniform",
-  ) -> None:
-    super().__init__()
-    self.proj = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-    self.use_max_pooling = use_max_pooling
-    self.blocks = nn.ModuleList()
-    for _ in range(num_blocks):
-      self.blocks.append(nn.ModuleList([
-          nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-          nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-      ]))
-    self.dropout = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
-    self.apply(lambda module: _apply_initializer(module, initializer))
-
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    out = self.proj(x)
-    if self.use_max_pooling:
-      out = F.max_pool2d(out, kernel_size=3, stride=2, padding=1)
-    for conv1, conv2 in self.blocks:
-      residual = out
-      out = F.relu(out)
-      out = self.dropout(out)
-      out = conv1(out)
-      out = F.relu(out)
-      out = conv2(out)
-      out = out + residual
-    return out
-
-
-class ImpalaCNN(nn.Module):
-  def __init__(
-      self,
-      *,
-      input_channels: int = 4,
-      width_scale: int = 1,
-      dims: tuple[int, ...] = (16, 32, 32),
-      num_blocks: int = 2,
-      dropout: float = 0.0,
-      initializer: InitializerName = "xavier_uniform",
-  ) -> None:
-    super().__init__()
-    stages = []
-    in_channels = input_channels
-    for width in dims:
-      out_channels = int(width * width_scale)
-      stages.append(
-          ResidualStage(
-              in_channels,
-              out_channels,
-              num_blocks=num_blocks,
-              dropout=dropout,
-              initializer=initializer,
-          )
-      )
-      in_channels = out_channels
-    self.stages = nn.Sequential(*stages)
-    self.output_channels = in_channels
-
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    return F.relu(self.stages(x))
-
-
-class ResNet18Encoder(nn.Module):
-  """ResNet-18 trunk adapted for Atari frame stacks.
-
-  The encoder keeps the spatial feature map instead of ResNet's average-pool
-  and classifier, matching the interface used by the DQN and IMPALA encoders.
-  """
-
-  def __init__(
-      self,
-      *,
-      input_channels: int = 4,
-      weights: str | None = None,
-  ) -> None:
-    super().__init__()
-    resolved_weights = self._resolve_weights(weights)
-    backbone = resnet18(weights=resolved_weights)
-    if resolved_weights is None:
-      mean = torch.zeros(input_channels)
-      std = torch.ones(input_channels)
-    else:
-      image_mean = torch.as_tensor(resolved_weights.transforms().mean)
-      image_std = torch.as_tensor(resolved_weights.transforms().std)
-      mean = image_mean.mean().repeat(input_channels)
-      std = image_std.mean().repeat(input_channels)
-    self.register_buffer("input_mean", mean.view(1, input_channels, 1, 1))
-    self.register_buffer("input_std", std.view(1, input_channels, 1, 1))
-    self.stem = nn.Sequential(
-        self._adapt_first_conv(backbone.conv1, input_channels),
-        backbone.bn1,
-        backbone.relu,
-        backbone.maxpool,
-    )
-    self.layers = nn.Sequential(
-        backbone.layer1,
-        backbone.layer2,
-        backbone.layer3,
-        backbone.layer4,
-    )
-    self.output_channels = 512
-
-  def _resolve_weights(self, weights: str | None) -> ResNet18_Weights | None:
-    if weights is None or str(weights).lower() in {"", "none", "false"}:
-      return None
-    if str(weights).lower() in {"default", "imagenet", "imagenet1k"}:
-      return ResNet18_Weights.DEFAULT
-    return ResNet18_Weights[weights]
-
-  def _adapt_first_conv(self, conv: nn.Conv2d, input_channels: int) -> nn.Conv2d:
-    adapted = nn.Conv2d(
-        input_channels,
-        conv.out_channels,
-        kernel_size=conv.kernel_size,
-        stride=conv.stride,
-        padding=conv.padding,
-        bias=conv.bias is not None,
-    )
-    with torch.no_grad():
-      if input_channels == conv.in_channels:
-        adapted.weight.copy_(conv.weight)
-      else:
-        gray_weight = conv.weight.mean(dim=1, keepdim=True)
-        adapted.weight.copy_(gray_weight.repeat(1, input_channels, 1, 1))
-        adapted.weight.mul_(conv.in_channels / input_channels)
-      if conv.bias is not None and adapted.bias is not None:
-        adapted.bias.copy_(conv.bias)
-    return adapted
-
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    x = (x - self.input_mean) / self.input_std
-    return self.layers(self.stem(x))
-
-
 class ConvTransitionCell(nn.Module):
   def __init__(
       self,
@@ -543,7 +209,7 @@ class ConvTransitionCell(nn.Module):
     self.renormalize_output = renormalize_output
     self.conv1 = nn.Conv2d(latent_dim + num_actions, latent_dim, kernel_size=3, padding=1)
     self.conv2 = nn.Conv2d(latent_dim, latent_dim, kernel_size=3, padding=1)
-    self.apply(lambda module: _apply_initializer(module, initializer))
+    self.apply(lambda module: apply_initializer(module, initializer))
 
   def forward(self, x: torch.Tensor, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     batch, _, height, width = x.shape
@@ -598,10 +264,10 @@ class RainbowDQNNetwork(nn.Module):
       encoder_type: EncoderName = "dqn",
       hidden_dim: int = 512,
       width_scale: int = 1,
-      use_spatial_embeddings: bool = False,
       initializer: InitializerName = "xavier_uniform",
       input_channels: int = 4,
       resnet18_weights: str | None = None,
+      resnet18_variant: ResNet18Variant = "resnet_layer3_reduced",
       probe_type: ProbeName = "flatten",
   ) -> None:
     super().__init__()
@@ -609,25 +275,15 @@ class RainbowDQNNetwork(nn.Module):
     self.num_atoms = num_atoms
     self.distributional = distributional
     self.renormalize_output = renormalize_output
-    self.use_spatial_embeddings = use_spatial_embeddings
-    if encoder_type == "dqn":
-      self.encoder = RainbowCNN(width_scale=width_scale, initializer=initializer)
-      latent_dim = self.encoder.output_channels
-    elif encoder_type == "impala":
-      self.encoder = ImpalaCNN(
-          input_channels=input_channels,
-          width_scale=width_scale,
-          initializer=initializer,
-      )
-      latent_dim = self.encoder.output_channels
-    elif encoder_type == "resnet18":
-      self.encoder = ResNet18Encoder(
-          input_channels=input_channels,
-          weights=resnet18_weights,
-      )
-      latent_dim = self.encoder.output_channels
-    else:
-      raise NotImplementedError(f"Unsupported encoder_type {encoder_type}")
+    self.encoder = make_encoder(
+        encoder_type=encoder_type,
+        input_channels=input_channels,
+        width_scale=width_scale,
+        initializer=initializer,
+        resnet18_weights=resnet18_weights,
+        resnet18_variant=resnet18_variant,
+    )
+    latent_dim = self.encoder.output_channels
     self.transition_model = TransitionModel(
         num_actions=num_actions,
         latent_dim=latent_dim,
@@ -665,7 +321,7 @@ class RainbowDQNNetwork(nn.Module):
         raise NotImplementedError(f"Unsupported probe_type {self.probe_type}")
       self.projection_out_dim = self.hidden_dim
       self.predictor = nn.Linear(self.hidden_dim, self.hidden_dim)
-      _apply_initializer(self.predictor, self.initializer)
+      apply_initializer(self.predictor, self.initializer)
       self.head = LinearHead(
           noisy=self.noisy,
           dueling=self.dueling,
@@ -846,8 +502,8 @@ class SACRainbowDQNNetwork(RainbowDQNNetwork):
       )
       self.predict_policy = nn.Linear(self.hidden_dim, self.hidden_dim)
       self.policy = nn.Linear(self.hidden_dim, self.num_actions)
-      _apply_initializer(self.predict_policy, self.initializer)
-      _apply_initializer(self.policy, self.initializer)
+      apply_initializer(self.predict_policy, self.initializer)
+      apply_initializer(self.policy, self.initializer)
       self.add_module("policy_projection_layer", self.policy_projection)
       self.add_module("predict_policy_layer", self.predict_policy)
       self.add_module("policy_layer", self.policy)

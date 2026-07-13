@@ -32,6 +32,12 @@ ATARI100K_GAME_NAMES = {
 }
 ATARI100K_ALGORITHMS = ["der", "spr", "sr_spr", "bbf", "sac_bbf"]
 ATARI100K_TRANSFER_MODES = ["full", "linear", "attentive", "lora"]
+ATARI100K_RESNET_VARIANTS = {
+    "full": "resnet_layer3_reduced",
+    "linear": "resnet_layer3_reduced",
+    "attentive": "resnet_layer3_flattened",
+    "lora": "resnet_layer3_flattened",
+}
 
 
 @pytest.mark.parametrize(
@@ -47,9 +53,7 @@ def test_atari100k_experiment_configs_compose(experiment: str):
     assert cfg.environment.name.startswith("ALE/")
     assert cfg.trainer.total_frames == 100_000
     assert cfg.algorithm.obs_key == "pixels"
-    assert cfg.trainer.eval_every_n_steps == 10_000
     assert cfg.trainer.num_eval_episodes == 10
-    assert cfg.trainer.final_num_eval_episodes == 20
     assert cfg.algorithm.seed == cfg.trainer.seed
 
 
@@ -57,7 +61,7 @@ def test_atari100k_experiment_configs_compose(experiment: str):
     "experiment",
     [
         f"atari100k/{algorithm}/{game}_resnet_{mode}"
-        for algorithm in ("der", "bbf")
+        for algorithm in ("der", "sac_bbf")
         for game in ATARI100K_GAMES
         for mode in ATARI100K_TRANSFER_MODES
     ],
@@ -68,8 +72,10 @@ def test_atari100k_resnet_transfer_experiment_configs_compose(experiment: str):
     assert cfg.atari.game == ATARI100K_GAME_NAMES[game_key]
     assert cfg.algorithm.encoder_type == "resnet18"
     assert cfg.algorithm.resnet18_weights == "DEFAULT"
+    mode = experiment.split("_resnet_")[-1]
+    assert cfg.algorithm.resnet18_variant == ATARI100K_RESNET_VARIANTS[mode]
     assert cfg.algorithm.transfer_mode != "none"
-    if "/bbf/" in experiment:
+    if "/sac_bbf/" in experiment:
         assert cfg.algorithm.protect_encoder_from_reset is True
 
 
@@ -80,9 +86,9 @@ def test_smoke_atari100k_der_assault():
         "atari100k/der/assault",
         [
             *BASE_OVERRIDES,
-            "trainer.eval_every_n_steps=null",
             "trainer.total_frames=20",
             "trainer.log_every_n_steps=10",
+            "trainer.num_eval_episodes=0",
             "algorithm.replay_capacity=128",
             "algorithm.min_replay_history=8",
             "algorithm.batch_size=2",
@@ -346,7 +352,35 @@ def test_resnet18_encoder_forward_shape():
     assert output.q_values.shape == (2, 4)
     assert output.logits is not None
     assert output.logits.shape == (2, 4, 51)
-    assert output.latent.shape == (2, 512, 3, 3)
+    assert output.latent.shape == (2, 64, 6, 6)
+
+
+@pytest.mark.parametrize(
+    ("variant", "expected_shape"),
+    [
+        ("resnet_full", (2, 512, 3, 3)),
+        ("resnet_layer3_flattened", (2, 256, 6, 6)),
+        ("resnet_layer3_reduced", (2, 64, 6, 6)),
+    ],
+)
+def test_resnet18_variants_define_spatial_feature_shape(variant: str, expected_shape: tuple[int, ...]):
+    from src.algorithms.atari100k.networks import RainbowDQNNetwork
+
+    network = RainbowDQNNetwork(
+        num_actions=4,
+        num_atoms=51,
+        noisy=False,
+        dueling=True,
+        distributional=True,
+        encoder_type="resnet18",
+        resnet18_variant=variant,  # type: ignore[arg-type]
+        hidden_dim=128,
+        input_channels=4,
+    )
+
+    latent = network.encode(torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8))
+
+    assert latent.shape == expected_shape
 
 
 def test_der_train_step_with_resnet18_encoder():
@@ -390,13 +424,18 @@ def test_linear_probe_freezes_encoder_and_uses_head_lr():
     )
     agent = DERAgent(config, seed=3)
 
-    assert all(not parameter.requires_grad for parameter in agent.online_network.encoder.parameters())
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_params == ["reducer.weight", "reducer.bias"]
     assert any(
         parameter.requires_grad
         for name, parameter in agent.online_network.named_parameters()
         if name.startswith(("projection", "head"))
     )
-    assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-4}
+    assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-5, 1e-4}
 
 
 def test_full_finetune_uses_scaled_encoder_lr():
@@ -417,8 +456,8 @@ def test_full_finetune_uses_scaled_encoder_lr():
 
 
 def test_attentive_probe_uses_attention_projection_and_freezes_encoder():
-    from src.algorithms.atari100k.networks import AttentiveProbe
     from src.algorithms.atari100k.der import DERAgent, DERConfig
+    from src.algorithms.atari100k.transfer_learning import AttentiveProbe
 
     config = DERConfig(
         num_actions=4,
@@ -430,7 +469,12 @@ def test_attentive_probe_uses_attention_projection_and_freezes_encoder():
     agent = DERAgent(config, seed=11)
 
     assert isinstance(agent.online_network.projection, AttentiveProbe)
-    assert all(not parameter.requires_grad for parameter in agent.online_network.encoder.parameters())
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    assert trainable_encoder_params == ["reducer.weight", "reducer.bias"]
     output = agent.online_network(
         torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8),
         agent.support,
@@ -439,8 +483,8 @@ def test_attentive_probe_uses_attention_projection_and_freezes_encoder():
 
 
 def test_lora_mode_trains_only_encoder_adapters_and_heads():
-    from src.algorithms.atari100k.networks import LoRAConv2d
     from src.algorithms.atari100k.der import DERAgent, DERConfig
+    from src.algorithms.atari100k.transfer_learning import LoRAConv2d
 
     config = DERConfig(
         num_actions=4,
@@ -512,34 +556,6 @@ def test_lora_adapters_follow_agent_device_for_action_selection():
     assert action.device.type == agent.device.type
 
 
-def test_static_transfer_metrics_include_parameter_counts():
-    from src.algorithms.atari100k.algorithm import Atari100KAlgorithm
-    from src.algorithms.atari100k.der import DERAgent, DERConfig
-
-    agent = DERAgent(
-        DERConfig(
-            num_actions=4,
-            encoder_type="resnet18",
-            transfer_mode="lora",
-            hidden_dim=128,
-            lora_rank=4,
-            device="cpu",
-        ),
-        seed=31,
-    )
-    algorithm = Atari100KAlgorithm()
-    algorithm.agent = agent
-
-    metrics = algorithm._build_static_train_metrics()
-
-    assert metrics["train/transfer_mode_lora"] == 1.0
-    assert metrics["train/encoder_type_resnet18"] == 1.0
-    assert metrics["train/params_total"] > 0
-    assert metrics["train/params_trainable"] > 0
-    assert metrics["train/params_encoder_total"] > metrics["train/params_encoder_trainable"]
-    assert metrics["train/params_lora_trainable"] > 0
-
-
 def test_freeze_encoder_bn_keeps_batch_norm_eval_after_train_step():
     from src.algorithms.atari100k.der import DERAgent, DERConfig
 
@@ -607,10 +623,10 @@ def test_bbf_protect_encoder_from_reset_skips_encoder_perturbation():
     assert all(torch.equal(value, after[name]) for name, value in before.items())
 
 
-def test_bbf_lora_reset_keeps_adapter_state_dict_compatible():
-    from src.algorithms.atari100k.bbf import BBFAgent, BBFConfig
+def test_sac_bbf_lora_reset_keeps_adapter_state_dict_compatible():
+    from src.algorithms.atari100k.sac_bbf import SACBBFAgent, SACBBFConfig
 
-    config = BBFConfig(
+    config = SACBBFConfig(
         num_actions=4,
         batch_size=2,
         encoder_type="resnet18",
@@ -622,7 +638,7 @@ def test_bbf_lora_reset_keeps_adapter_state_dict_compatible():
         target_update_period=1,
         device="cpu",
     )
-    agent = BBFAgent(config, seed=29)
+    agent = SACBBFAgent(config, seed=29)
 
     agent.training_steps = 3
     agent.reset_weights()

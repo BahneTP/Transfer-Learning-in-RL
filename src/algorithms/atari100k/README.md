@@ -61,7 +61,7 @@ The algorithmic parts that most directly affect learning are kept hard-ported.
 Transfer learning is implemented as an optional extension to the shared Atari
 100K network stack. The default configs keep `transfer_mode: none`, so baseline
 DER/SPR/SR-SPR/BBF/SAC-BBF runs remain random-initialized ports of the original
-agents.
+agents. Transfer-learning experiment configs are provided for DER and SAC-BBF.
 
 Available encoder choices:
 
@@ -77,12 +77,12 @@ channels. With `resnet18_weights=DEFAULT`, torchvision ImageNet weights are
 loaded and the encoder applies the corresponding normalization averaged across
 the grayscale channels.
 
-The current ResNet-18 feature path is:
+ResNet-18 has three explicit feature variants:
 
 ```text
-(B, 4, 84, 84)
-  -> ResNet-18 trunk
-  -> (B, 512, 3, 3)
+resnet_full             -> layer4 output: 512x3x3
+resnet_layer3_flattened -> layer3 output: 256x6x6
+resnet_layer3_reduced   -> layer3 output + trainable 1x1 reducer: 64x6x6
 ```
 
 Projection/probing modes:
@@ -91,30 +91,26 @@ Projection/probing modes:
   and heads train. `encoder_lr_scale` multiplies the base learning rate for
   encoder parameters.
 - `transfer_mode=linear_probe`: encoder is frozen. The existing flat projection
-  maps `512 * 3 * 3` features to `hidden_dim`, and the heads train.
+  maps spatial ResNet features to `hidden_dim`, and the heads train.
 - `transfer_mode=attentive_probe`: encoder is frozen. A small trainable
-  attention pooling probe scores the nine spatial ResNet tokens and maps the
-  pooled feature to `hidden_dim`; the heads train.
+  attention pooling probe scores spatial ResNet tokens and maps the pooled
+  feature to `hidden_dim`; the heads train.
 - `transfer_mode=lora`: encoder base weights are frozen. Low-rank LoRA adapters
   are inserted into encoder `Conv2d`/`Linear` layers; only those adapter weights,
   the projection/probe, transition model, and heads train.
 
 Use `freeze_encoder_bn=true` for pretrained ResNet runs when BatchNorm running
-statistics should stay fixed. For BBF-family transfer experiments, use
+statistics should stay fixed. For SAC-BBF transfer experiments, use
 `protect_encoder_from_reset=true` to keep periodic reset/shrink-perturb from
 modifying the transferred encoder while still allowing the transition model and
 heads to reset according to the BBF config.
 
-The BBF baseline keeps the original reset/shrink-perturb behavior. Transfer
-experiment YAMLs for BBF set `protect_encoder_from_reset=true`, so the
-transferred encoder is protected while the rest of the BBF reset policy remains
-active.
+The BBF baseline keeps the original reset/shrink-perturb behavior. SAC-BBF
+transfer experiment YAMLs set `protect_encoder_from_reset=true`, so the
+transferred encoder is protected while the rest of the reset policy remains active.
 
-Static run metadata is logged as numeric training metrics for downstream
-analysis: `train/transfer_mode_*`, `train/encoder_type_*`,
-`train/probe_type_*`, `train/params_total`, `train/params_trainable`,
-`train/params_encoder_trainable`, `train/params_head_probe_trainable`, and
-`train/params_lora_trainable`.
+Transfer settings are stored in the resolved Hydra config and, when enabled,
+the W&B run config. They are not duplicated as `train/*` metrics.
 
 Example DER full fine-tuning run:
 
@@ -134,6 +130,6 @@ python src/train.py experiment=atari100k/der/assault \
   algorithm.encoder_type=resnet18 \
   algorithm.resnet18_weights=DEFAULT \
   algorithm.transfer_mode=lora \
-  algorithm.lora_rank=8 \
-  algorithm.lora_alpha=16.0
+  algorithm.lora_rank=4 \
+  algorithm.lora_alpha=8.0
 ```

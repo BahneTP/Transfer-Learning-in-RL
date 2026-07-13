@@ -11,13 +11,13 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from src.algorithms.atari100k.networks import LoRAConv2d
-from src.algorithms.atari100k.networks import LoRALinear
 from src.algorithms.atari100k.networks import RainbowDQNNetwork
-from src.algorithms.atari100k.networks import apply_lora_adapters
 from src.algorithms.atari100k.rl import categorical_target
 from src.algorithms.atari100k.rl import linearly_decaying_epsilon
 from src.algorithms.atari100k.rl import select_actions
+from src.algorithms.atari100k.transfer_learning import LoRAConv2d
+from src.algorithms.atari100k.transfer_learning import LoRALinear
+from src.algorithms.atari100k.transfer_learning import apply_lora_adapters
 
 
 @dataclasses.dataclass
@@ -49,12 +49,12 @@ class DERConfig:
   hidden_dim: int = 512
   width_scale: int = 1
   resnet18_weights: str | None = None
+  resnet18_variant: str = "resnet_layer3_reduced"
   transfer_mode: str = "none"
-  probe_type: str = "flatten"
   encoder_lr_scale: float = 1.0
   freeze_encoder_bn: bool = False
-  lora_rank: int = 8
-  lora_alpha: float = 16.0
+  lora_rank: int = 4
+  lora_alpha: float = 8.0
   lora_dropout: float = 0.0
   renormalize_output: bool = False
   data_augmentation: bool = False
@@ -103,6 +103,7 @@ class DERAgent:
         hidden_dim=self.config.hidden_dim,
         width_scale=self.config.width_scale,
         resnet18_weights=self.config.resnet18_weights,
+        resnet18_variant=self.config.resnet18_variant,  # type: ignore[arg-type]
         probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
@@ -111,7 +112,7 @@ class DERAgent:
   def _network_probe_type(self) -> str:
     if self.config.transfer_mode == "attentive_probe":
       return "attentive"
-    return self.config.probe_type
+    return "flatten"
 
   def _make_optimizer(self) -> torch.optim.Optimizer:
     parameter_groups = self._optimizer_parameter_groups(
@@ -165,10 +166,8 @@ class DERAgent:
         "linear_probe",
         "attentive_probe",
         "lora",
-    }:
+      }:
       raise ValueError(f"Unsupported transfer_mode={self.config.transfer_mode!r}")
-    if self.config.probe_type not in {"flatten", "attentive"}:
-      raise ValueError(f"Unsupported probe_type={self.config.probe_type!r}")
     self._configure_network_transfer(self.online_network)
     self._configure_network_transfer(self.target_network)
 
@@ -185,6 +184,8 @@ class DERAgent:
     )
     if freeze_encoder:
       self._set_encoder_trainable(network, trainable=False)
+      if self.config.transfer_mode in {"linear_probe", "attentive_probe"}:
+        self._set_reducer_trainable(network, trainable=True)
     if self.config.freeze_encoder_bn:
       self._freeze_encoder_batch_norm(network)
 
@@ -207,6 +208,13 @@ class DERAgent:
 
   def _set_encoder_trainable(self, network: RainbowDQNNetwork, *, trainable: bool) -> None:
     for parameter in network.encoder.parameters():
+      parameter.requires_grad = trainable
+
+  def _set_reducer_trainable(self, network: RainbowDQNNetwork, *, trainable: bool) -> None:
+    reducer = getattr(network.encoder, "reducer", None)
+    if reducer is None:
+      return
+    for parameter in reducer.parameters():
       parameter.requires_grad = trainable
 
   def _has_lora_adapters(self, network: RainbowDQNNetwork) -> bool:

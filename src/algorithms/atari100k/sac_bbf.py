@@ -43,6 +43,7 @@ class SACBBFAgent(BBFAgent):
         hidden_dim=self.config.hidden_dim,
         width_scale=self.config.width_scale,
         resnet18_weights=self.config.resnet18_weights,
+        resnet18_variant=self.config.resnet18_variant,  # type: ignore[arg-type]
         probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,

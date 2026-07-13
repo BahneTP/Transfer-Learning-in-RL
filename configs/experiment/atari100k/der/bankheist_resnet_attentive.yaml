@@ -6,5 +6,6 @@ defaults:
 algorithm:
   encoder_type: resnet18
   resnet18_weights: DEFAULT
+  resnet18_variant: resnet_layer3_flattened
   transfer_mode: attentive_probe
   freeze_encoder_bn: true

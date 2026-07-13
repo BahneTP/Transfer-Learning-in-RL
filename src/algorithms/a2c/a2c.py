@@ -229,8 +229,7 @@ class A2CAlgorithm(BaseAlgorithm):
     # ------------------------------------------------------------------
 
     def get_policy(self) -> TensorDictModule:
-        # The trainer wraps eval rollouts in ``set_exploration_type(MODE)``,
-        # which makes the same actor return the distribution mode (deterministic).
+        # The trainer wraps eval rollouts in deterministic exploration mode.
         return self.actor
 
     def get_explore_policy(self) -> TensorDictModule:
