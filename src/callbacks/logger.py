@@ -54,7 +54,20 @@ class WandBLogger:
     def on_step_end(self, metrics: dict[str, float], step: int) -> None:
         if self._run is not None:
             import wandb
-            wandb.log(metrics, step=step)
+            series_metrics = {
+                key: value
+                for key, value in metrics.items()
+                if not key.startswith("eval/")
+            }
+            eval_metrics = {
+                key: value
+                for key, value in metrics.items()
+                if key.startswith("eval/")
+            }
+            if series_metrics:
+                wandb.log(series_metrics, step=step)
+            for key, value in eval_metrics.items():
+                wandb.run.summary[key] = value
 
     def on_train_end(self, state: dict[str, Any]) -> None:
         if self._run is not None:

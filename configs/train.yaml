@@ -18,7 +18,7 @@ trainer:
   total_frames: 1_000_000
   num_envs: 1             # number of parallel environments
   log_every_n_steps: 1_000
-  num_eval_episodes: 10
+  num_eval_episodes: 50
 
 checkpoint:
   enabled: false

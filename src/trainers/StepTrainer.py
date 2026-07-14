@@ -10,7 +10,7 @@ affects learning lives in the algorithm.
 Per-iteration metrics emitted on logging boundaries mirror the torchrl SOTA
 DQN reference (sota-implementations/dqn/dqn_cartpole.py):
   - ``train/raw_reward`` / ``train/clip_reward`` and ``train/episode_length``:
-    mean over episodes that completed inside the batch.
+    mean over all episodes completed since the previous logging boundary.
   - ``train/q_values``: mean Q-value of the actions actually executed.
   - ``time/collect``, ``time/step``, ``time/speed``: collector wait, in-step
     optimisation time, and frames/second for the iteration.
@@ -20,6 +20,7 @@ DQN reference (sota-implementations/dqn/dqn_cartpole.py):
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 
 from tensordict import TensorDict
 
@@ -55,6 +56,8 @@ class StepTrainer(BaseTrainer):
         log_every = int(self.trainer_cfg.log_every_n_steps)
         eval_episodes = int(self.trainer_cfg.get("num_eval_episodes", 10))
         metrics: dict[str, float] = {}
+        episode_sums: dict[str, float] = defaultdict(float)
+        episode_counts: dict[str, int] = defaultdict(int)
 
         collector_iter = iter(self.collector)
         while True:
@@ -71,8 +74,10 @@ class StepTrainer(BaseTrainer):
             step_start = time.perf_counter()
             metrics = self.algorithm.step(batch)
             step_time = time.perf_counter() - step_start
+            _accumulate_episode_metrics(batch, episode_sums, episode_counts)
 
             if self._should_log(log_every, batch_frames):
+                metrics.update(_flush_episode_metrics(episode_sums, episode_counts))
                 metrics.update(_batch_metrics(batch))
                 total_time = collect_time + step_time
                 metrics["time/collect"] = collect_time
@@ -87,19 +92,30 @@ class StepTrainer(BaseTrainer):
                     step=self._step,
                 )
 
+        leftover_episode_metrics = _flush_episode_metrics(episode_sums, episode_counts)
+        if leftover_episode_metrics:
+            metrics.update(leftover_episode_metrics)
+            fire_callbacks(
+                TrainerEvent.ON_STEP_END,
+                self.callbacks,
+                metrics=leftover_episode_metrics,
+                step=self._step,
+            )
+
         if eval_episodes > 0:
             eval_start = time.perf_counter()
             eval_metrics = self.evaluate(num_episodes=eval_episodes)
-            metrics.update(eval_metrics)
-            metrics["eval/num_episodes"] = float(eval_episodes)
-            metrics["time/eval"] = time.perf_counter() - eval_start
+            eval_log_metrics = dict(eval_metrics)
+            eval_log_metrics["eval/num_episodes"] = float(eval_episodes)
+            eval_log_metrics["time/eval"] = time.perf_counter() - eval_start
+            metrics.update(eval_log_metrics)
             print(f"\nFinal evaluation at step {self._step} ({eval_episodes} episodes):")
             for key, value in eval_metrics.items():
                 print(f"  {key}: {value:.4f}")
             fire_callbacks(
                 TrainerEvent.ON_STEP_END,
                 self.callbacks,
-                metrics=metrics,
+                metrics=eval_log_metrics,
                 step=self._step,
             )
 
@@ -110,35 +126,10 @@ def _batch_metrics(batch: TensorDict) -> dict[str, float]:
     """Per-batch training metrics that mirror the torchrl SOTA DQN reference.
 
     Each metric is emitted only when the underlying TensorDict key is present:
-    ``RewardSum`` for ``episode_reward``, ``StepCounter`` for ``step_count``,
-    and a ``QValueActor``-style policy for ``action_value`` / ``action``.
+    a ``QValueActor``-style policy for ``action_value`` / ``action``.
     """
     flat = batch.reshape(-1)
     out: dict[str, float] = {}
-
-    done = flat.get(("next", "done"), default=None)
-    if done is not None and done.bool().any():
-        mask = done.bool()
-        episode_rewards = flat.get(("next", "episode_reward"), default=None)
-        raw_episode_rewards = flat.get(("next", "raw_episode_reward"), default=None)
-        if raw_episode_rewards is not None:
-            out["train/raw_reward"] = (
-                raw_episode_rewards[mask].float().mean().item()
-            )
-            if episode_rewards is not None:
-                out["train/clip_reward"] = (
-                    episode_rewards[mask].float().mean().item()
-                )
-        if episode_rewards is not None:
-            out.setdefault(
-                "train/raw_reward",
-                episode_rewards[mask].float().mean().item(),
-            )
-        episode_lengths = flat.get(("next", "step_count"), default=None)
-        if episode_lengths is not None:
-            out["train/episode_length"] = (
-                episode_lengths[mask].float().mean().item()
-            )
 
     # Q-value of the action actually executed.
     # Handles both one-hot encoding (action shape [B, A]) and categorical
@@ -157,4 +148,58 @@ def _batch_metrics(batch: TensorDict) -> dict[str, float]:
                 .item()
             )
 
+    return out
+
+
+def _accumulate_episode_metrics(
+    batch: TensorDict,
+    sums: dict[str, float],
+    counts: dict[str, int],
+) -> None:
+    flat = batch.reshape(-1)
+    done = flat.get(("next", "done"), default=None)
+    if done is None or not done.bool().any():
+        return
+
+    mask = done.bool()
+    episode_count = int(mask.sum().item())
+    episode_rewards = flat.get(("next", "episode_reward"), default=None)
+    raw_episode_rewards = flat.get(("next", "raw_episode_reward"), default=None)
+    if raw_episode_rewards is not None:
+        _add_episode_metric("train/raw_reward", raw_episode_rewards, mask, sums, counts)
+        if episode_rewards is not None:
+            _add_episode_metric("train/clip_reward", episode_rewards, mask, sums, counts)
+    elif episode_rewards is not None:
+        _add_episode_metric("train/raw_reward", episode_rewards, mask, sums, counts)
+    episode_lengths = flat.get(("next", "step_count"), default=None)
+    if episode_lengths is not None:
+        _add_episode_metric("train/episode_length", episode_lengths, mask, sums, counts)
+    sums["train/episodes"] += float(episode_count)
+    counts["train/episodes"] += episode_count
+
+
+def _add_episode_metric(
+    key: str,
+    values,
+    mask,
+    sums: dict[str, float],
+    counts: dict[str, int],
+) -> None:
+    selected = values[mask].float()
+    sums[key] += float(selected.sum().item())
+    counts[key] += int(selected.numel())
+
+
+def _flush_episode_metrics(
+    sums: dict[str, float],
+    counts: dict[str, int],
+) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for key in list(sums.keys()):
+        if key == "train/episodes":
+            out[key] = sums[key]
+        elif counts.get(key, 0) > 0:
+            out[key] = sums[key] / counts[key]
+    sums.clear()
+    counts.clear()
     return out

@@ -53,7 +53,7 @@ def test_atari100k_experiment_configs_compose(experiment: str):
     assert cfg.environment.name.startswith("ALE/")
     assert cfg.trainer.total_frames == 100_000
     assert cfg.algorithm.obs_key == "pixels"
-    assert cfg.trainer.num_eval_episodes == 10
+    assert cfg.trainer.num_eval_episodes == 50
     assert cfg.algorithm.seed == cfg.trainer.seed
 
 
@@ -217,6 +217,55 @@ def test_episodic_life_reset_advances_without_resetting_game():
     assert base.reset_calls == 1
     assert base.actions == [1, 0]
     np.testing.assert_array_equal(observation, np.array([20], dtype=np.uint8))
+
+
+def test_step_trainer_accumulates_episode_metrics_until_flush():
+    from collections import defaultdict
+
+    from src.trainers.StepTrainer import _accumulate_episode_metrics
+    from src.trainers.StepTrainer import _flush_episode_metrics
+
+    sums: dict[str, float] = defaultdict(float)
+    counts: dict[str, int] = defaultdict(int)
+    first = TensorDict(
+        {
+            "next": TensorDict(
+                {
+                    "done": torch.tensor([True, False]),
+                    "raw_episode_reward": torch.tensor([10.0, 0.0]),
+                    "episode_reward": torch.tensor([1.0, 0.0]),
+                    "step_count": torch.tensor([100, 0]),
+                },
+                batch_size=[2],
+            )
+        },
+        batch_size=[2],
+    )
+    second = TensorDict(
+        {
+            "next": TensorDict(
+                {
+                    "done": torch.tensor([True, True]),
+                    "raw_episode_reward": torch.tensor([20.0, 30.0]),
+                    "episode_reward": torch.tensor([2.0, 3.0]),
+                    "step_count": torch.tensor([200, 300]),
+                },
+                batch_size=[2],
+            )
+        },
+        batch_size=[2],
+    )
+
+    _accumulate_episode_metrics(first, sums, counts)
+    _accumulate_episode_metrics(second, sums, counts)
+    metrics = _flush_episode_metrics(sums, counts)
+
+    assert metrics["train/raw_reward"] == pytest.approx(20.0)
+    assert metrics["train/clip_reward"] == pytest.approx(2.0)
+    assert metrics["train/episode_length"] == pytest.approx(200.0)
+    assert metrics["train/episodes"] == pytest.approx(3.0)
+    assert not sums
+    assert not counts
 
 
 def test_atari_algorithm_seed_controls_agent_and_replay():
