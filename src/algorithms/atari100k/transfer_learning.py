@@ -172,23 +172,38 @@ class ResNet18Encoder(nn.Module):
       input_channels: int = 4,
       weights: str | None = None,
       variant: ResNet18Variant = "resnet_layer3_reduced",
+      use_input_adapter: bool = False,
       initializer: InitializerName = "xavier_uniform",
   ) -> None:
     super().__init__()
     resolved_weights = self._resolve_weights(weights)
     backbone = resnet18(weights=resolved_weights)
+    normalization_channels = 3 if use_input_adapter else input_channels
     if resolved_weights is None:
-      mean = torch.zeros(input_channels)
-      std = torch.ones(input_channels)
+      mean = torch.zeros(normalization_channels)
+      std = torch.ones(normalization_channels)
     else:
       image_mean = torch.as_tensor(resolved_weights.transforms().mean)
       image_std = torch.as_tensor(resolved_weights.transforms().std)
-      mean = image_mean.mean().repeat(input_channels)
-      std = image_std.mean().repeat(input_channels)
-    self.register_buffer("input_mean", mean.view(1, input_channels, 1, 1))
-    self.register_buffer("input_std", std.view(1, input_channels, 1, 1))
+      if use_input_adapter:
+        mean = image_mean
+        std = image_std
+      else:
+        mean = image_mean.mean().repeat(input_channels)
+        std = image_std.mean().repeat(input_channels)
+    self.input_adapter = (
+        self._make_input_adapter(input_channels)
+        if use_input_adapter and input_channels != backbone.conv1.in_channels
+        else None
+    )
+    self.register_buffer("input_mean", mean.view(1, normalization_channels, 1, 1))
+    self.register_buffer("input_std", std.view(1, normalization_channels, 1, 1))
+    first_conv = backbone.conv1 if self.input_adapter is not None else self._adapt_first_conv(
+        backbone.conv1,
+        input_channels,
+    )
     self.stem = nn.Sequential(
-        self._adapt_first_conv(backbone.conv1, input_channels),
+        first_conv,
         backbone.bn1,
         backbone.relu,
         backbone.maxpool,
@@ -221,8 +236,16 @@ class ResNet18Encoder(nn.Module):
     else:
       raise ValueError(f"Unsupported resnet18 variant {variant!r}.")
     self.variant = variant
+    self.use_input_adapter = use_input_adapter
     if self.reducer is not None:
       apply_initializer(self.reducer, initializer)
+
+  def _make_input_adapter(self, input_channels: int) -> nn.Conv2d:
+    adapter = nn.Conv2d(input_channels, 3, kernel_size=1)
+    with torch.no_grad():
+      adapter.weight.fill_(1.0 / input_channels)
+      adapter.bias.zero_()
+    return adapter
 
   def _resolve_weights(self, weights: str | None) -> ResNet18_Weights | None:
     if weights is None or str(weights).lower() in {"", "none", "false"}:
@@ -252,6 +275,8 @@ class ResNet18Encoder(nn.Module):
     return adapted
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
+    if self.input_adapter is not None:
+      x = self.input_adapter(x)
     x = (x - self.input_mean) / self.input_std
     x = self.layers(self.stem(x))
     if self.reducer is not None:

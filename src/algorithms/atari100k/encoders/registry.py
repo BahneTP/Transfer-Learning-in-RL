@@ -20,6 +20,7 @@ def make_encoder(
     initializer: InitializerName,
     resnet18_weights: str | None = None,
     resnet18_variant: ResNet18Variant = "resnet_layer3_reduced",
+    resnet18_input_adapter: bool = False,
 ) -> nn.Module:
   if encoder_type == "dqn":
     return RainbowCNN(width_scale=width_scale, initializer=initializer)
@@ -34,6 +35,7 @@ def make_encoder(
         input_channels=input_channels,
         weights=resnet18_weights,
         variant=resnet18_variant,
+        use_input_adapter=resnet18_input_adapter,
         initializer=initializer,
     )
   raise NotImplementedError(f"Unsupported encoder_type {encoder_type}")

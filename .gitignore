@@ -1,6 +1,7 @@
 # Hydra outputs & logs (train, eval, wandb, tensorboard all under logs/)
 logs/
 outputs/
+models
 
 # Weights & Biases (root-level fallback)
 wandb/

@@ -50,6 +50,7 @@ class DERConfig:
   width_scale: int = 1
   resnet18_weights: str | None = None
   resnet18_variant: str = "resnet_layer3_reduced"
+  resnet18_input_adapter: bool = False
   transfer_mode: str = "none"
   encoder_lr_scale: float = 1.0
   freeze_encoder_bn: bool = False
@@ -104,6 +105,7 @@ class DERAgent:
         width_scale=self.config.width_scale,
         resnet18_weights=self.config.resnet18_weights,
         resnet18_variant=self.config.resnet18_variant,  # type: ignore[arg-type]
+        resnet18_input_adapter=self.config.resnet18_input_adapter,
         probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
@@ -185,7 +187,7 @@ class DERAgent:
     if freeze_encoder:
       self._set_encoder_trainable(network, trainable=False)
       if self.config.transfer_mode in {"linear_probe", "attentive_probe"}:
-        self._set_reducer_trainable(network, trainable=True)
+        self._set_probe_adapter_modules_trainable(network, trainable=True)
     if self.config.freeze_encoder_bn:
       self._freeze_encoder_batch_norm(network)
 
@@ -215,6 +217,19 @@ class DERAgent:
     if reducer is None:
       return
     for parameter in reducer.parameters():
+      parameter.requires_grad = trainable
+
+  def _set_probe_adapter_modules_trainable(
+      self,
+      network: RainbowDQNNetwork,
+      *,
+      trainable: bool,
+  ) -> None:
+    self._set_reducer_trainable(network, trainable=trainable)
+    input_adapter = getattr(network.encoder, "input_adapter", None)
+    if input_adapter is None:
+      return
+    for parameter in input_adapter.parameters():
       parameter.requires_grad = trainable
 
   def _has_lora_adapters(self, network: RainbowDQNNetwork) -> bool:

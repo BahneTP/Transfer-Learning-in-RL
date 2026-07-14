@@ -383,6 +383,28 @@ def test_resnet18_variants_define_spatial_feature_shape(variant: str, expected_s
     assert latent.shape == expected_shape
 
 
+def test_resnet18_input_adapter_preserves_feature_shape():
+    from src.algorithms.atari100k.networks import RainbowDQNNetwork
+
+    network = RainbowDQNNetwork(
+        num_actions=4,
+        num_atoms=51,
+        noisy=False,
+        dueling=True,
+        distributional=True,
+        encoder_type="resnet18",
+        resnet18_input_adapter=True,
+        hidden_dim=128,
+        input_channels=4,
+    )
+
+    latent = network.encode(torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8))
+
+    assert latent.shape == (2, 64, 6, 6)
+    assert network.encoder.input_adapter is not None
+    assert network.encoder.stem[0].in_channels == 3
+
+
 def test_der_train_step_with_resnet18_encoder():
     from src.algorithms.atari100k.der import DERAgent, DERConfig
 
@@ -436,6 +458,33 @@ def test_linear_probe_freezes_encoder_and_uses_head_lr():
         if name.startswith(("projection", "head"))
     )
     assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-5, 1e-4}
+
+
+def test_linear_probe_with_resnet18_input_adapter_keeps_adapter_trainable():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="resnet18",
+        resnet18_input_adapter=True,
+        transfer_mode="linear_probe",
+        hidden_dim=128,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=13)
+
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+
+    assert trainable_encoder_params == [
+        "input_adapter.weight",
+        "input_adapter.bias",
+        "reducer.weight",
+        "reducer.bias",
+    ]
 
 
 def test_full_finetune_uses_scaled_encoder_lr():

@@ -28,6 +28,7 @@ hidden_dim: 512
 width_scale: 1
 resnet18_weights: null
 resnet18_variant: resnet_layer3_reduced
+resnet18_input_adapter: false
 transfer_mode: none
 encoder_lr_scale: 1.0
 freeze_encoder_bn: false

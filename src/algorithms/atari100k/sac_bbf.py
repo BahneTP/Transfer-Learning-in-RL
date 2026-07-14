@@ -44,6 +44,7 @@ class SACBBFAgent(BBFAgent):
         width_scale=self.config.width_scale,
         resnet18_weights=self.config.resnet18_weights,
         resnet18_variant=self.config.resnet18_variant,  # type: ignore[arg-type]
+        resnet18_input_adapter=self.config.resnet18_input_adapter,
         probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,

@@ -1,0 +1,7 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/der/jamesbond_resnet_full
+  - _self_
+
+algorithm:
+  resnet18_input_adapter: true

@@ -29,6 +29,15 @@ weight_decay: 0.1
 encoder_type: impala
 hidden_dim: 2048
 width_scale: 4
+resnet18_weights: null
+resnet18_variant: resnet_layer3_reduced
+resnet18_input_adapter: false
+transfer_mode: none
+encoder_lr_scale: 1.0
+freeze_encoder_bn: false
+lora_rank: 4
+lora_alpha: 8.0
+lora_dropout: 0.0
 renormalize_output: true
 data_augmentation: true
 batches_to_group: 2

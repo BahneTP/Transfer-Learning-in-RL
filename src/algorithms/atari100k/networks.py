@@ -268,6 +268,7 @@ class RainbowDQNNetwork(nn.Module):
       input_channels: int = 4,
       resnet18_weights: str | None = None,
       resnet18_variant: ResNet18Variant = "resnet_layer3_reduced",
+      resnet18_input_adapter: bool = False,
       probe_type: ProbeName = "flatten",
   ) -> None:
     super().__init__()
@@ -282,6 +283,7 @@ class RainbowDQNNetwork(nn.Module):
         initializer=initializer,
         resnet18_weights=resnet18_weights,
         resnet18_variant=resnet18_variant,
+        resnet18_input_adapter=resnet18_input_adapter,
     )
     latent_dim = self.encoder.output_channels
     self.transition_model = TransitionModel(
