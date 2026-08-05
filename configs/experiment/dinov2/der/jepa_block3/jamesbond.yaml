@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+  - /experiment/dinov2/der/linear/jamesbond
+  - _self_
+
+algorithm:
+  transfer_mode: jepa_probe
+  dinov2_output_block: 3
+  jepa_loss_weight: 1.0
+  jepa_action_dim: 64

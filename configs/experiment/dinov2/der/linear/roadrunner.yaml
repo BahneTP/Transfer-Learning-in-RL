@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/der/roadrunner
+  - _self_
+
+algorithm:
+  encoder_type: dinov2_vits14
+  dinov2_weights: models/dinov2_vits14_pretrain.pth
+  transfer_mode: linear_probe
+  learning_rate: 1e-4
+  encoder_lr_scale: 1.0

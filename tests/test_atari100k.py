@@ -1,6 +1,7 @@
 """Smoke coverage for Atari 100K DER/SPR/BBF experiment wiring."""
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -32,12 +33,43 @@ ATARI100K_GAME_NAMES = {
 }
 ATARI100K_ALGORITHMS = ["der", "spr", "sr_spr", "bbf", "sac_bbf"]
 ATARI100K_TRANSFER_MODES = ["full", "linear", "attentive", "lora"]
-ATARI100K_RESNET_VARIANTS = {
-    "full": "resnet_layer3_reduced",
-    "linear": "resnet_layer3_reduced",
-    "attentive": "resnet_layer3_flattened",
-    "lora": "resnet_layer3_flattened",
+TRANSFER_GAMES = ["assault", "bankheist", "jamesbond", "roadrunner"]
+TRANSFER_ALGORITHMS = ["der", "sac_bbf"]
+DINO_TRANSFER_MODES = {
+    "full": "full_finetune",
+    "linear": "linear_probe",
+    "attentive": "attentive_probe",
+    "lora": "lora",
 }
+DINO_BLOCK_EXPERIMENTS = {
+    "full_block3": ("full_finetune", 3),
+    "full_block6": ("full_finetune", 6),
+    "full_block9": ("full_finetune", 9),
+    "linear_block1": ("linear_probe", 1),
+    "linear_block2": ("linear_probe", 2),
+    "linear_block3": ("linear_probe", 3),
+    "linear_block4": ("linear_probe", 4),
+    "linear_block5": ("linear_probe", 5),
+    "linear_block6": ("linear_probe", 6),
+    "linear_block7": ("linear_probe", 7),
+    "linear_block8": ("linear_probe", 8),
+    "linear_block9": ("linear_probe", 9),
+    "linear_block10": ("linear_probe", 10),
+    "linear_block11": ("linear_probe", 11),
+}
+DINO_VITS14_WEIGHTS = Path("models/dinov2_vits14_pretrain.pth")
+
+
+def optimizer_lrs_by_parameter_name(agent) -> dict[str, float]:
+    parameter_names = {
+        parameter: name
+        for name, parameter in agent.online_network.named_parameters()
+    }
+    lrs = {}
+    for group in agent.optimizer.param_groups:
+        for parameter in group["params"]:
+            lrs[parameter_names[parameter]] = group["lr"]
+    return lrs
 
 
 @pytest.mark.parametrize(
@@ -60,23 +92,207 @@ def test_atari100k_experiment_configs_compose(experiment: str):
 @pytest.mark.parametrize(
     "experiment",
     [
-        f"atari100k/{algorithm}/{game}_resnet_{mode}"
-        for algorithm in ("der", "sac_bbf")
-        for game in ATARI100K_GAMES
-        for mode in ATARI100K_TRANSFER_MODES
+        f"dinov2/{algorithm}/{mode}/{game}"
+        for algorithm in TRANSFER_ALGORITHMS
+        for mode in DINO_TRANSFER_MODES
+        for game in TRANSFER_GAMES
     ],
 )
-def test_atari100k_resnet_transfer_experiment_configs_compose(experiment: str):
+def test_dinov2_transfer_experiment_configs_compose(experiment: str):
     cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
-    game_key = experiment.split("/")[-1].split("_resnet_")[0]
-    assert cfg.atari.game == ATARI100K_GAME_NAMES[game_key]
+    _, algorithm, mode, game = experiment.split("/")
+
+    assert cfg.atari.game == ATARI100K_GAME_NAMES[game]
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.dinov2_weights == "models/dinov2_vits14_pretrain.pth"
+    assert cfg.algorithm.transfer_mode == DINO_TRANSFER_MODES[mode]
+    assert cfg.algorithm.learning_rate == pytest.approx(1e-4)
+    if mode == "full":
+        assert cfg.algorithm.encoder_lr_scale == pytest.approx(0.01)
+    if algorithm == "sac_bbf":
+        assert cfg.algorithm.protect_encoder_from_reset is True
+
+
+@pytest.mark.parametrize(
+    "experiment",
+    [f"dinov2/der/{mode}/jamesbond" for mode in DINO_BLOCK_EXPERIMENTS],
+)
+def test_dinov2_block_transfer_experiment_configs_compose(experiment: str):
+    cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
+    _, _, mode, game = experiment.split("/")
+    transfer_mode, output_block = DINO_BLOCK_EXPERIMENTS[mode]
+
+    assert game == "jamesbond"
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == transfer_mode
+    assert cfg.algorithm.dinov2_output_block == output_block
+
+
+def test_dinov2_layer_mix_transfer_experiment_config_compose():
+    cfg = load_experiment_cfg("dinov2/der/linear_mix/jamesbond", BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == "linear_probe"
+    assert cfg.algorithm.dinov2_output_mode == "layer_mix"
+    assert list(cfg.algorithm.dinov2_mix_blocks) == list(range(1, 13))
+
+
+@pytest.mark.parametrize(
+    ("experiment", "mix_blocks"),
+    [
+        ("dinov2/der/linear_mix_blocks_1_5/jamesbond", [1, 2, 3, 4, 5]),
+        ("dinov2/der/linear_mix_blocks_8_12/jamesbond", [8, 9, 10, 11, 12]),
+        ("dinov2/der/linear_mix_blocks_3_7_11/jamesbond", [3, 7, 11]),
+    ],
+)
+def test_dinov2_layer_mix_subset_experiment_configs_compose(
+    experiment: str,
+    mix_blocks: list[int],
+):
+    cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == "linear_probe"
+    assert cfg.algorithm.dinov2_output_mode == "layer_mix"
+    assert list(cfg.algorithm.dinov2_mix_blocks) == mix_blocks
+
+
+@pytest.mark.parametrize(
+    ("experiment", "rank", "alpha"),
+    [
+        ("dinov2/der/lora_block3_r1_a2/jamesbond", 1, 2.0),
+        ("dinov2/der/lora_block3_r2_a4/jamesbond", 2, 4.0),
+        ("dinov2/der/lora_block3_r4_a8/jamesbond", 4, 8.0),
+        ("dinov2/der/lora_block3_r8_a16/jamesbond", 8, 16.0),
+        ("dinov2/der/lora_block3_r16_a32/jamesbond", 16, 32.0),
+    ],
+)
+def test_dinov2_lora_block3_rank_alpha_experiment_configs_compose(
+    experiment: str,
+    rank: int,
+    alpha: float,
+):
+    cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == "lora"
+    assert cfg.algorithm.dinov2_output_block == 3
+    assert cfg.algorithm.lora_rank == rank
+    assert cfg.algorithm.lora_alpha == pytest.approx(alpha)
+
+
+def test_dinov2_jepa_block3_experiment_config_compose():
+    cfg = load_experiment_cfg("dinov2/der/jepa_block3/jamesbond", BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == "jepa_probe"
+    assert cfg.algorithm.dinov2_output_block == 3
+    assert cfg.algorithm.jepa_loss_weight == pytest.approx(1.0)
+    assert cfg.algorithm.jepa_action_dim == 64
+    assert cfg.algorithm.jepa_prediction_mode == "direct"
+
+
+def test_dinov2_jepa_full_block3_experiment_config_compose():
+    cfg = load_experiment_cfg("dinov2/der/jepa_full_block3/jamesbond", BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == "jepa_full_finetune"
+    assert cfg.algorithm.dinov2_output_block == 3
+    assert cfg.algorithm.learning_rate == pytest.approx(1e-4)
+    assert cfg.algorithm.encoder_lr_scale == pytest.approx(1.0)
+    assert cfg.algorithm.jepa_loss_weight == pytest.approx(1.0)
+    assert cfg.algorithm.jepa_action_dim == 64
+    assert cfg.algorithm.jepa_prediction_mode == "direct"
+    assert cfg.algorithm.temporal_straightening_weight == pytest.approx(0.0)
+    assert cfg.algorithm.lambda_sigreg == pytest.approx(0.0)
+
+
+def test_dinov2_jepa_full_straight_block3_experiment_config_compose():
+    cfg = load_experiment_cfg("dinov2/der/jepa_full_straight_block3/jamesbond", BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == "jepa_full_finetune"
+    assert cfg.algorithm.dinov2_output_block == 3
+    assert cfg.algorithm.encoder_lr_scale == pytest.approx(1.0)
+    assert cfg.algorithm.jepa_prediction_mode == "residual"
+    assert cfg.algorithm.temporal_straightening_weight == pytest.approx(0.1)
+
+
+def test_dinov2_jepa_full_sigreg_block3_experiment_config_compose():
+    cfg = load_experiment_cfg("dinov2/der/jepa_full_sigreg_block3/jamesbond", BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.transfer_mode == "jepa_full_finetune"
+    assert cfg.algorithm.dinov2_output_block == 3
+    assert cfg.algorithm.jepa_loss_weight == pytest.approx(1.0)
+    assert cfg.algorithm.jepa_prediction_mode == "residual"
+    assert cfg.algorithm.lambda_sigreg == pytest.approx(0.1)
+    assert cfg.algorithm.temporal_straightening_weight == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    "experiment",
+    [
+        f"resnet/{algorithm}/{mode}/{game}"
+        for algorithm in TRANSFER_ALGORITHMS
+        for mode in DINO_TRANSFER_MODES
+        for game in TRANSFER_GAMES
+    ],
+)
+def test_resnet_transfer_experiment_configs_compose(experiment: str):
+    cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
+    _, algorithm, mode, game = experiment.split("/")
+
+    assert cfg.atari.game == ATARI100K_GAME_NAMES[game]
     assert cfg.algorithm.encoder_type == "resnet18"
     assert cfg.algorithm.resnet18_weights == "DEFAULT"
-    mode = experiment.split("_resnet_")[-1]
-    assert cfg.algorithm.resnet18_variant == ATARI100K_RESNET_VARIANTS[mode]
-    assert cfg.algorithm.transfer_mode != "none"
-    if "/sac_bbf/" in experiment:
+    assert cfg.algorithm.resnet18_variant == "resnet_layer3_reduced"
+    assert cfg.algorithm.transfer_mode == DINO_TRANSFER_MODES[mode]
+    if algorithm == "sac_bbf":
         assert cfg.algorithm.protect_encoder_from_reset is True
+
+
+@pytest.mark.parametrize(
+    ("experiment", "variant"),
+    [
+        ("resnet/der/linear_layer1/jamesbond", "resnet_layer1_reduced"),
+        ("resnet/der/linear_layer2/jamesbond", "resnet_layer2_reduced"),
+        ("resnet/der/linear_layer3/jamesbond", "resnet_layer3_reduced"),
+        ("resnet/der/linear_layer4/jamesbond", "resnet_layer4_reduced"),
+    ],
+)
+def test_resnet_linear_layer_experiment_configs_compose(experiment: str, variant: str):
+    cfg = load_experiment_cfg(experiment, BASE_OVERRIDES)
+
+    assert cfg.atari.game == "Jamesbond"
+    assert cfg.algorithm.encoder_type == "resnet18"
+    assert cfg.algorithm.resnet18_weights == "DEFAULT"
+    assert cfg.algorithm.resnet18_variant == variant
+    assert cfg.algorithm.transfer_mode == "linear_probe"
+
+
+def test_atari100k_dinov2_transfer_override_compose():
+    cfg = load_experiment_cfg(
+        "atari100k/der/jamesbond",
+        [
+            *BASE_OVERRIDES,
+            "algorithm.encoder_type=dinov2_vits14",
+            "algorithm.dinov2_weights=models/dinov2_vits14_pretrain.pth",
+            "algorithm.transfer_mode=linear_probe",
+        ],
+    )
+
+    assert cfg.algorithm.encoder_type == "dinov2_vits14"
+    assert cfg.algorithm.dinov2_weights == "models/dinov2_vits14_pretrain.pth"
+    assert cfg.algorithm.transfer_mode == "linear_probe"
 
 
 def test_smoke_atari100k_der_assault():
@@ -402,14 +618,20 @@ def test_resnet18_encoder_forward_shape():
     assert output.logits is not None
     assert output.logits.shape == (2, 4, 51)
     assert output.latent.shape == (2, 64, 6, 6)
+    assert network.encoder.input_adapter.in_channels == 4
+    assert network.encoder.input_adapter.out_channels == 3
+    assert network.encoder.stem[0].in_channels == 3
 
 
 @pytest.mark.parametrize(
     ("variant", "expected_shape"),
     [
         ("resnet_full", (2, 512, 3, 3)),
+        ("resnet_layer1_reduced", (2, 16, 21, 21)),
+        ("resnet_layer2_reduced", (2, 32, 11, 11)),
         ("resnet_layer3_flattened", (2, 256, 6, 6)),
         ("resnet_layer3_reduced", (2, 64, 6, 6)),
+        ("resnet_layer4_reduced", (2, 128, 3, 3)),
     ],
 )
 def test_resnet18_variants_define_spatial_feature_shape(variant: str, expected_shape: tuple[int, ...]):
@@ -430,6 +652,81 @@ def test_resnet18_variants_define_spatial_feature_shape(variant: str, expected_s
     latent = network.encode(torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8))
 
     assert latent.shape == expected_shape
+    assert network.encoder.input_adapter.in_channels == 4
+    assert network.encoder.input_adapter.out_channels == 3
+    assert network.encoder.stem[0].in_channels == 3
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_vits14_encoder_forward_shape():
+    from src.algorithms.atari100k.networks import RainbowDQNNetwork
+
+    network = RainbowDQNNetwork(
+        num_actions=4,
+        num_atoms=51,
+        noisy=False,
+        dueling=True,
+        distributional=True,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        hidden_dim=128,
+        input_channels=4,
+    )
+
+    latent = network.encode(torch.randint(0, 256, (1, 84, 84, 4), dtype=torch.uint8))
+
+    assert latent.shape == (1, 64, 6, 6)
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+@pytest.mark.parametrize("output_block", [6, 9])
+def test_dinov2_vits14_output_block_forward_shape(output_block: int):
+    from src.algorithms.atari100k.networks import RainbowDQNNetwork
+
+    network = RainbowDQNNetwork(
+        num_actions=4,
+        num_atoms=51,
+        noisy=False,
+        dueling=True,
+        distributional=True,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        dinov2_output_block=output_block,
+        hidden_dim=128,
+        input_channels=4,
+    )
+
+    latent = network.encode(torch.randint(0, 256, (1, 84, 84, 4), dtype=torch.uint8))
+
+    assert network.encoder.output_block == output_block
+    assert latent.shape == (1, 64, 6, 6)
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_vits14_layer_mix_forward_shape():
+    from src.algorithms.atari100k.networks import RainbowDQNNetwork
+
+    network = RainbowDQNNetwork(
+        num_actions=4,
+        num_atoms=51,
+        noisy=False,
+        dueling=True,
+        distributional=True,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        dinov2_output_mode="layer_mix",
+        dinov2_mix_blocks=tuple(range(1, 13)),
+        hidden_dim=128,
+        input_channels=4,
+    )
+
+    latent = network.encode(torch.randint(0, 256, (1, 84, 84, 4), dtype=torch.uint8))
+    weights = network.encoder.layer_mix_weights()
+
+    assert latent.shape == (1, 64, 6, 6)
+    assert weights.shape == (12,)
+    assert torch.allclose(weights.sum(), torch.tensor(1.0))
+    assert torch.allclose(weights, torch.full((12,), 1.0 / 12.0))
 
 
 def test_der_train_step_with_resnet18_encoder():
@@ -478,13 +775,351 @@ def test_linear_probe_freezes_encoder_and_uses_head_lr():
         for name, parameter in agent.online_network.encoder.named_parameters()
         if parameter.requires_grad
     ]
-    assert trainable_encoder_params == ["reducer.weight", "reducer.bias"]
+    assert trainable_encoder_params == [
+        "input_adapter.weight",
+        "input_adapter.bias",
+        "reducer.weight",
+        "reducer.bias",
+    ]
     assert any(
         parameter.requires_grad
         for name, parameter in agent.online_network.named_parameters()
         if name.startswith(("projection", "head"))
     )
-    assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-5, 1e-4}
+    assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-4}
+    lrs = optimizer_lrs_by_parameter_name(agent)
+    assert lrs["encoder.input_adapter.weight"] == 1e-4
+    assert lrs["encoder.input_adapter.bias"] == 1e-4
+    assert lrs["encoder.reducer.weight"] == 1e-4
+    assert lrs["encoder.reducer.bias"] == 1e-4
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_linear_probe_keeps_adapter_and_reducer_trainable():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        transfer_mode="linear_probe",
+        hidden_dim=128,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=13)
+
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+
+    assert trainable_encoder_params == [
+        "input_adapter.weight",
+        "input_adapter.bias",
+        "reducer.weight",
+        "reducer.bias",
+    ]
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_linear_mix_probe_keeps_mix_logits_trainable():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        dinov2_output_mode="layer_mix",
+        dinov2_mix_blocks=tuple(range(1, 13)),
+        transfer_mode="linear_probe",
+        hidden_dim=128,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=17)
+
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    lrs = optimizer_lrs_by_parameter_name(agent)
+
+    assert trainable_encoder_params == [
+        "mix_logits",
+        "input_adapter.weight",
+        "input_adapter.bias",
+        "reducer.weight",
+        "reducer.bias",
+    ]
+    assert lrs["encoder.mix_logits"] == 1e-4
+    assert lrs["encoder.input_adapter.weight"] == 1e-4
+    assert lrs["encoder.reducer.weight"] == 1e-4
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_layer_mix_metrics_are_reported():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        dinov2_output_mode="layer_mix",
+        dinov2_mix_blocks=tuple(range(1, 13)),
+        transfer_mode="linear_probe",
+        hidden_dim=128,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=19)
+
+    metrics = agent._transfer_metrics()
+
+    assert sorted(metrics) == [
+        f"dinov2_layer_mix/block_{block:02d}" for block in range(1, 13)
+    ]
+    assert sum(metrics.values()) == pytest.approx(1.0)
+    assert metrics["dinov2_layer_mix/block_01"] == pytest.approx(1.0 / 12.0)
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_jepa_probe_keeps_backbone_frozen_and_trains_predictor():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        dinov2_output_block=3,
+        transfer_mode="jepa_probe",
+        hidden_dim=128,
+        jepa_action_dim=16,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=23)
+
+    trainable_encoder_params = [
+        name
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    ]
+    trainable_jepa_params = [
+        name
+        for name, parameter in agent.online_network.named_parameters()
+        if name.startswith(("jepa_action_embedding", "jepa_predictor")) and parameter.requires_grad
+    ]
+    lrs = optimizer_lrs_by_parameter_name(agent)
+
+    assert trainable_encoder_params == [
+        "input_adapter.weight",
+        "input_adapter.bias",
+        "reducer.weight",
+        "reducer.bias",
+    ]
+    assert trainable_jepa_params == [
+        "jepa_action_embedding.weight",
+        "jepa_predictor.0.weight",
+        "jepa_predictor.0.bias",
+        "jepa_predictor.2.weight",
+        "jepa_predictor.2.bias",
+    ]
+    assert lrs["jepa_action_embedding.weight"] == 1e-4
+    assert lrs["jepa_predictor.0.weight"] == 1e-4
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_jepa_probe_train_step_reports_jepa_loss():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        dinov2_output_block=3,
+        transfer_mode="jepa_probe",
+        hidden_dim=128,
+        jepa_action_dim=16,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=29)
+    batch = {
+        "state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "next_state": np.random.randint(0, 256, (2, 1, 84, 84, 4), dtype=np.uint8),
+        "action": np.random.randint(0, 4, (2, 1), dtype=np.int32),
+        "return": np.random.randn(2, 1).astype(np.float32),
+        "terminal": np.zeros((2, 1), dtype=np.uint8),
+        "discount": np.full((2, 1), 0.99, dtype=np.float32),
+        "sampling_probabilities": np.ones((2,), dtype=np.float32),
+    }
+
+    metrics = agent.train_step(batch)
+
+    assert metrics["TotalLoss"] >= metrics["DQNLoss"]
+    assert metrics["JEPALoss"] > 0.0
+    assert metrics["priorities"].shape == (2,)
+
+
+@pytest.mark.skipif(not DINO_VITS14_WEIGHTS.exists(), reason="DINOv2 weights are not available locally")
+def test_dinov2_jepa_full_finetune_trains_backbone_and_predictor():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dinov2_vits14",
+        dinov2_weights=str(DINO_VITS14_WEIGHTS),
+        dinov2_output_block=3,
+        transfer_mode="jepa_full_finetune",
+        hidden_dim=128,
+        jepa_action_dim=16,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=30)
+    lrs = optimizer_lrs_by_parameter_name(agent)
+
+    assert any(
+        name.startswith("blocks.0.")
+        for name, parameter in agent.online_network.encoder.named_parameters()
+        if parameter.requires_grad
+    )
+    assert lrs["encoder.input_adapter.weight"] == pytest.approx(1e-4)
+    assert lrs["encoder.reducer.weight"] == pytest.approx(1e-4)
+    assert lrs["jepa_predictor.0.weight"] == pytest.approx(1e-4)
+    assert lrs["encoder.blocks.0.norm1.weight"] == pytest.approx(1e-4)
+
+
+def test_jepa_residual_prediction_adds_current_latent():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dqn",
+        transfer_mode="jepa_probe",
+        jepa_prediction_mode="residual",
+        hidden_dim=4,
+        jepa_action_dim=4,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=31)
+    current_latent = torch.tensor([[1.0, 2.0, 4.0, 8.0], [0.5, 1.5, 2.5, 3.5]])
+    predicted_update = torch.tensor([[0.0, 1.0, -1.0, 2.0], [2.0, -1.0, 0.5, -0.5]])
+    target_next = current_latent + predicted_update
+    calls = {"encode": 0}
+
+    def fake_encode_jepa_latent(states, *, eval_mode=False):
+      calls["encode"] += 1
+      return current_latent if calls["encode"] == 1 else target_next
+
+    def fake_predict_next_jepa_latent(latent, actions, *, action_dim):
+      assert latent is current_latent
+      assert action_dim == 4
+      return predicted_update
+
+    agent.online_network.encode_jepa_latent = fake_encode_jepa_latent
+    agent.online_network.predict_next_jepa_latent = fake_predict_next_jepa_latent
+
+    loss = agent._jepa_loss(
+        torch.zeros((2, 4, 84, 84), dtype=torch.uint8),
+        torch.zeros((2, 4, 84, 84), dtype=torch.uint8),
+        torch.tensor([0, 1]),
+    )
+
+    assert loss.item() == pytest.approx(0.0, abs=1e-7)
+
+
+def test_temporal_straightening_loss_uses_three_consecutive_latents():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dqn",
+        transfer_mode="jepa_full_finetune",
+        temporal_straightening_weight=0.1,
+        hidden_dim=4,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=32)
+    latents = [
+        torch.tensor([[0.0, 0.0, 0.0, 0.0]]),
+        torch.tensor([[1.0, 0.0, 0.0, 0.0]]),
+        torch.tensor([[1.0, 1.0, 0.0, 0.0]]),
+    ]
+    calls = {"encode": 0}
+
+    def fake_encode_jepa_latent(states, *, eval_mode=False):
+      value = latents[calls["encode"]]
+      calls["encode"] += 1
+      return value
+
+    agent.online_network.encode_jepa_latent = fake_encode_jepa_latent
+
+    loss = agent._temporal_straightening_loss({
+        "state": torch.zeros((1, 3, 4, 84, 84), dtype=torch.uint8),
+        "same_trajectory": torch.ones((1, 3), dtype=torch.uint8),
+    })
+
+    assert calls["encode"] == 3
+    assert loss.item() == pytest.approx(1.0)
+
+
+def test_temporal_straightening_subsequence_len_is_enabled_only_when_weighted():
+    from src.algorithms.atari100k.algorithm import Atari100KAlgorithm
+    from src.algorithms.atari100k.der import DERConfig
+
+    algorithm = Atari100KAlgorithm(device=torch.device("cpu"), num_actions=4)
+
+    assert algorithm._subseq_len(DERConfig(num_actions=4)) == 1
+    assert algorithm._subseq_len(
+        DERConfig(
+            num_actions=4,
+            transfer_mode="jepa_full_finetune",
+            temporal_straightening_weight=0.1,
+        )
+    ) == 3
+
+
+def test_sigreg_loss_is_zero_when_disabled():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dqn",
+        transfer_mode="jepa_full_finetune",
+        lambda_sigreg=0.0,
+        hidden_dim=4,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=33)
+
+    loss = agent._sigreg_loss(
+        torch.zeros((2, 4, 84, 84), dtype=torch.uint8),
+        torch.zeros((2, 4, 84, 84), dtype=torch.uint8),
+    )
+
+    assert loss.item() == pytest.approx(0.0)
+
+
+def test_sigreg_embedding_loss_is_deterministic_and_finite():
+    from src.algorithms.atari100k.der import DERAgent, DERConfig
+
+    config = DERConfig(
+        num_actions=4,
+        encoder_type="dqn",
+        transfer_mode="jepa_full_finetune",
+        lambda_sigreg=0.1,
+        hidden_dim=4,
+        device="cpu",
+    )
+    agent = DERAgent(config, seed=34)
+    embeddings = torch.randn((8, 4), generator=torch.Generator().manual_seed(1))
+
+    loss = agent._sigreg_embedding_loss(embeddings)
+    repeated_loss = agent._sigreg_embedding_loss(embeddings)
+
+    assert torch.isfinite(loss)
+    assert loss.item() >= 0.0
+    assert repeated_loss.item() == pytest.approx(loss.item())
 
 
 def test_full_finetune_uses_scaled_encoder_lr():
@@ -502,6 +1137,12 @@ def test_full_finetune_uses_scaled_encoder_lr():
 
     assert any(parameter.requires_grad for parameter in agent.online_network.encoder.parameters())
     assert {group["lr"] for group in agent.optimizer.param_groups} == {1e-5, 1e-4}
+    lrs = optimizer_lrs_by_parameter_name(agent)
+    assert lrs["encoder.input_adapter.weight"] == 1e-4
+    assert lrs["encoder.input_adapter.bias"] == 1e-4
+    assert lrs["encoder.reducer.weight"] == 1e-4
+    assert lrs["encoder.reducer.bias"] == 1e-4
+    assert lrs["encoder.layers.0.0.conv1.weight"] == 1e-5
 
 
 def test_attentive_probe_uses_attention_projection_and_freezes_encoder():
@@ -523,7 +1164,15 @@ def test_attentive_probe_uses_attention_projection_and_freezes_encoder():
         for name, parameter in agent.online_network.encoder.named_parameters()
         if parameter.requires_grad
     ]
-    assert trainable_encoder_params == ["reducer.weight", "reducer.bias"]
+    assert trainable_encoder_params == [
+        "input_adapter.weight",
+        "input_adapter.bias",
+        "reducer.weight",
+        "reducer.bias",
+    ]
+    assert agent.online_network.latent_dim == 64
+    assert agent.online_network.projection.value.in_features == 2304
+    assert agent.online_network.projection.value.out_features == 128
     output = agent.online_network(
         torch.randint(0, 256, (2, 84, 84, 4), dtype=torch.uint8),
         agent.support,
@@ -698,6 +1347,31 @@ def test_sac_bbf_lora_reset_keeps_adapter_state_dict_compatible():
     ]
     assert trainable_encoder_names
     assert all(".lora_" in name for name in trainable_encoder_names)
+
+
+def test_sac_bbf_keeps_adapter_and_reducer_on_base_lr():
+    from src.algorithms.atari100k.sac_bbf import SACBBFAgent, SACBBFConfig
+
+    config = SACBBFConfig(
+        num_actions=4,
+        batch_size=2,
+        encoder_type="resnet18",
+        transfer_mode="full_finetune",
+        encoder_lr_scale=0.1,
+        hidden_dim=128,
+        policy_learning_rate=3e-4,
+        target_update_period=1,
+        device="cpu",
+    )
+    agent = SACBBFAgent(config, seed=31)
+    lrs = optimizer_lrs_by_parameter_name(agent)
+
+    assert lrs["encoder.input_adapter.weight"] == 1e-4
+    assert lrs["encoder.input_adapter.bias"] == 1e-4
+    assert lrs["encoder.reducer.weight"] == 1e-4
+    assert lrs["encoder.reducer.bias"] == 1e-4
+    assert lrs["encoder.layers.0.0.conv1.weight"] == 1e-5
+    assert lrs["policy.weight"] == 3e-4
 
 
 def test_sac_bbf_train_step_includes_policy_metrics():

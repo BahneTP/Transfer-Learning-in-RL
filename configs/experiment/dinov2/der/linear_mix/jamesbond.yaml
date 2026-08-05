@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /experiment/dinov2/der/linear/jamesbond
+  - _self_
+
+algorithm:
+  dinov2_output_mode: layer_mix
+  dinov2_mix_blocks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]

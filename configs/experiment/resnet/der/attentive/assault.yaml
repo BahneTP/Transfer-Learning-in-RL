@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/der/assault
+  - _self_
+
+algorithm:
+  encoder_type: resnet18
+  resnet18_weights: DEFAULT
+  resnet18_variant: resnet_layer3_reduced
+  transfer_mode: attentive_probe
+  freeze_encoder_bn: true

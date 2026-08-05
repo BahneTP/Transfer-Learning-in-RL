@@ -268,6 +268,10 @@ class RainbowDQNNetwork(nn.Module):
       input_channels: int = 4,
       resnet18_weights: str | None = None,
       resnet18_variant: ResNet18Variant = "resnet_layer3_reduced",
+      dinov2_weights: str | None = None,
+      dinov2_output_block: int = 12,
+      dinov2_output_mode: str = "single_block",
+      dinov2_mix_blocks: tuple[int, ...] | list[int] | None = None,
       probe_type: ProbeName = "flatten",
   ) -> None:
     super().__init__()
@@ -282,6 +286,10 @@ class RainbowDQNNetwork(nn.Module):
         initializer=initializer,
         resnet18_weights=resnet18_weights,
         resnet18_variant=resnet18_variant,
+        dinov2_weights=dinov2_weights,
+        dinov2_output_block=dinov2_output_block,
+        dinov2_output_mode=dinov2_output_mode,
+        dinov2_mix_blocks=dinov2_mix_blocks,
     )
     latent_dim = self.encoder.output_channels
     self.transition_model = TransitionModel(
@@ -301,6 +309,8 @@ class RainbowDQNNetwork(nn.Module):
     self.probe_type = probe_type
     self.head: LinearHead | None = None
     self.predictor: nn.Linear | None = None
+    self.jepa_action_embedding: nn.Embedding | None = None
+    self.jepa_predictor: nn.Sequential | None = None
 
   def _ensure_head(self, representation_dim: int, device: torch.device) -> None:
     if self.projection is None:
@@ -336,6 +346,23 @@ class RainbowDQNNetwork(nn.Module):
       self.projection.to(device)
       self.predictor.to(device)
       self.head.to(device)
+
+  def ensure_jepa_predictor(self, *, action_dim: int = 64, device: torch.device) -> None:
+    if self.jepa_predictor is not None:
+      return
+    self.jepa_action_embedding = nn.Embedding(self.num_actions, action_dim)
+    self.jepa_predictor = nn.Sequential(
+        nn.Linear(self.hidden_dim + action_dim, self.hidden_dim),
+        nn.GELU(),
+        nn.Linear(self.hidden_dim, self.hidden_dim),
+    )
+    nn.init.normal_(self.jepa_action_embedding.weight, std=0.02)
+    apply_initializer(self.jepa_predictor[0], self.initializer)
+    apply_initializer(self.jepa_predictor[2], self.initializer)
+    self.add_module("jepa_action_embedding_layer", self.jepa_action_embedding)
+    self.add_module("jepa_predictor_layer", self.jepa_predictor)
+    self.jepa_action_embedding.to(device)
+    self.jepa_predictor.to(device)
 
   def _to_nchw(self, x: torch.Tensor) -> torch.Tensor:
     if x.ndim == 4 and x.shape[1] != self.input_channels and x.shape[-1] == self.input_channels:
@@ -397,6 +424,34 @@ class RainbowDQNNetwork(nn.Module):
   ) -> torch.Tensor:
     latent = self.encode(x, eval_mode=eval_mode, data_augmentation=data_augmentation)
     return self.encode_project_from_latent(latent, eval_mode=eval_mode)
+
+  def encode_jepa_latent(
+      self,
+      x: torch.Tensor,
+      *,
+      eval_mode: bool = False,
+      data_augmentation: bool = False,
+  ) -> torch.Tensor:
+    return F.relu(
+        self.encode_project(
+            x,
+            eval_mode=eval_mode,
+            data_augmentation=data_augmentation,
+        )
+    )
+
+  def predict_next_jepa_latent(
+      self,
+      latent: torch.Tensor,
+      actions: torch.Tensor,
+      *,
+      action_dim: int = 64,
+  ) -> torch.Tensor:
+    self.ensure_jepa_predictor(action_dim=action_dim, device=latent.device)
+    assert self.jepa_action_embedding is not None
+    assert self.jepa_predictor is not None
+    action_embedding = self.jepa_action_embedding(actions.reshape(-1).long())
+    return self.jepa_predictor(torch.cat([latent, action_embedding], dim=-1))
 
   def encode_project_from_latent(
       self,

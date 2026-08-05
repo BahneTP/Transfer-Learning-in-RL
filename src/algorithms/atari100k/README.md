@@ -73,26 +73,42 @@ Available encoder choices:
 | ResNet-18 trunk | `resnet18` | Torchvision ResNet-18 without average pool/classifier |
 
 For `encoder_type=resnet18`, Atari frame stacks have shape `(B, 4, 84, 84)`.
-The first ResNet convolution is adapted from RGB to four grayscale frame
-channels. With `resnet18_weights=DEFAULT`, torchvision ImageNet weights are
-loaded and the encoder applies the corresponding normalization averaged across
-the grayscale channels.
+A trainable 1x1 input adapter maps the four Atari frame channels to RGB before
+the original ResNet stem. With `resnet18_weights=DEFAULT`, torchvision ImageNet
+weights are loaded unchanged and the encoder applies the corresponding RGB
+normalization.
 
 ResNet-18 has three explicit feature variants:
 
 ```text
 resnet_full             -> layer4 output: 512x3x3
+resnet_layer1_reduced   -> layer1 output + trainable 1x1 reducer: 16x21x21
+resnet_layer2_reduced   -> layer2 output + trainable 1x1 reducer: 32x11x11
 resnet_layer3_flattened -> layer3 output: 256x6x6
 resnet_layer3_reduced   -> layer3 output + trainable 1x1 reducer: 64x6x6
+resnet_layer4_reduced   -> layer4 output + trainable 1x1 reducer: 128x3x3
 ```
 
 Projection/probing modes:
 
 - `transfer_mode=full_finetune`: encoder, projection/probe, transition model,
   and heads train. `encoder_lr_scale` multiplies the base learning rate for
-  encoder parameters.
+  backbone encoder parameters. The input adapter, 1x1 reducer, projection/probe,
+  predictor, and heads use the base learning rate.
 - `transfer_mode=linear_probe`: encoder is frozen. The existing flat projection
   maps spatial ResNet features to `hidden_dim`, and the heads train.
+- `transfer_mode=jepa_probe`: encoder is frozen as in linear probing. The input
+  adapter, 1x1 reducer, projection, heads, and an action-conditioned JEPA
+  predictor train with an auxiliary next-latent prediction loss.
+  `jepa_prediction_mode=direct` predicts the next latent directly;
+  `jepa_prediction_mode=residual` predicts a delta that is added to the current
+  latent before the loss.
+- `transfer_mode=jepa_full_finetune`: same auxiliary JEPA loss, but the encoder
+  is full fine-tuned instead of frozen.
+  `temporal_straightening_weight > 0` additionally samples three consecutive
+  states and adds `1 - cosine(h_{t+1} - h_t, h_{t+2} - h_{t+1})`.
+  `lambda_sigreg > 0` adds SIGReg, a sketched characteristic-function match that
+  encourages JEPA latents to follow an isotropic Gaussian distribution.
 - `transfer_mode=attentive_probe`: encoder is frozen. A small trainable
   attention pooling probe scores spatial ResNet tokens and maps the pooled
   feature to `hidden_dim`; the heads train.

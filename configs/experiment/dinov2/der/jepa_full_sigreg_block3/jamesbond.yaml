@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /experiment/dinov2/der/jepa_full_block3/jamesbond
+  - _self_
+
+algorithm:
+  jepa_loss_weight: 1.0
+  jepa_prediction_mode: residual
+  lambda_sigreg: 0.1

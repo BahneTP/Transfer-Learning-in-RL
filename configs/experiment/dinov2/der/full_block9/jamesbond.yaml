@@ -1,0 +1,7 @@
+# @package _global_
+defaults:
+  - /experiment/dinov2/der/full/jamesbond
+  - _self_
+
+algorithm:
+  dinov2_output_block: 9

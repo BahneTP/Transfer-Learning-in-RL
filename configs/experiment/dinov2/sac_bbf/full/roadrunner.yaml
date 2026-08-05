@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - /experiment/atari100k/sac_bbf/roadrunner
+  - _self_
+
+algorithm:
+  encoder_type: dinov2_vits14
+  dinov2_weights: models/dinov2_vits14_pretrain.pth
+  protect_encoder_from_reset: true
+  transfer_mode: full_finetune
+  learning_rate: 1e-4
+  encoder_lr_scale: 0.01

@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /experiment/dinov2/der/jepa_full_block3/jamesbond
+  - _self_
+
+algorithm:
+  jepa_prediction_mode: residual
+  temporal_straightening_weight: 0.1

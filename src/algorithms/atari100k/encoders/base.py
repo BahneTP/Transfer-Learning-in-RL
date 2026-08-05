@@ -14,11 +14,14 @@ InitializerName = Literal[
     "kaiming_normal",
     "orthogonal",
 ]
-EncoderName = Literal["dqn", "impala", "resnet18"]
+EncoderName = Literal["dqn", "impala", "resnet18", "dinov2_vits14"]
 ResNet18Variant = Literal[
     "resnet_full",
+    "resnet_layer1_reduced",
+    "resnet_layer2_reduced",
     "resnet_layer3_flattened",
     "resnet_layer3_reduced",
+    "resnet_layer4_reduced",
 ]
 
 

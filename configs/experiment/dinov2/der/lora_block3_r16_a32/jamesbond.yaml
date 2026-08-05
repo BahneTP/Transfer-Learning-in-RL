@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /experiment/dinov2/der/lora_block3/jamesbond
+  - _self_
+
+algorithm:
+  lora_rank: 16
+  lora_alpha: 32.0

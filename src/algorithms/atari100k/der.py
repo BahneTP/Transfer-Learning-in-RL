@@ -50,12 +50,23 @@ class DERConfig:
   width_scale: int = 1
   resnet18_weights: str | None = None
   resnet18_variant: str = "resnet_layer3_reduced"
+  dinov2_weights: str | None = "models/dinov2_vits14_pretrain.pth"
+  dinov2_output_block: int = 12
+  dinov2_output_mode: str = "single_block"
+  dinov2_mix_blocks: tuple[int, ...] | list[int] = dataclasses.field(
+      default_factory=lambda: tuple(range(1, 13))
+  )
   transfer_mode: str = "none"
   encoder_lr_scale: float = 1.0
   freeze_encoder_bn: bool = False
-  lora_rank: int = 4
-  lora_alpha: float = 8.0
+  lora_rank: int = 1
+  lora_alpha: float = 2.0
   lora_dropout: float = 0.0
+  jepa_loss_weight: float = 1.0
+  jepa_action_dim: int = 64
+  jepa_prediction_mode: str = "direct"
+  temporal_straightening_weight: float = 0.0
+  lambda_sigreg: float = 0.0
   renormalize_output: bool = False
   data_augmentation: bool = False
   batches_to_group: int = 1
@@ -104,6 +115,10 @@ class DERAgent:
         width_scale=self.config.width_scale,
         resnet18_weights=self.config.resnet18_weights,
         resnet18_variant=self.config.resnet18_variant,  # type: ignore[arg-type]
+        dinov2_weights=self.config.dinov2_weights,
+        dinov2_output_block=self.config.dinov2_output_block,
+        dinov2_output_mode=self.config.dinov2_output_mode,
+        dinov2_mix_blocks=self.config.dinov2_mix_blocks,
         probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
@@ -140,7 +155,7 @@ class DERAgent:
     for name, parameter in self.online_network.named_parameters():
       if not parameter.requires_grad:
         continue
-      bucket = "encoder" if name.startswith("encoder.") else "head"
+      bucket = "head" if self._uses_base_lr(name) else "encoder"
       has_weight_decay = parameter.ndim != 1
       groups[(bucket, has_weight_decay)].append(parameter)
 
@@ -159,6 +174,13 @@ class DERAgent:
       raise ValueError("No trainable parameters remain after applying transfer settings.")
     return parameter_groups
 
+  def _uses_base_lr(self, parameter_name: str) -> bool:
+    return (
+        not parameter_name.startswith("encoder.")
+        or parameter_name.startswith(("encoder.input_adapter.", "encoder.reducer."))
+        or parameter_name == "encoder.mix_logits"
+    )
+
   def _configure_transfer(self) -> None:
     if self.config.transfer_mode not in {
         "none",
@@ -166,8 +188,12 @@ class DERAgent:
         "linear_probe",
         "attentive_probe",
         "lora",
+        "jepa_probe",
+        "jepa_full_finetune",
       }:
       raise ValueError(f"Unsupported transfer_mode={self.config.transfer_mode!r}")
+    if self.config.jepa_prediction_mode not in {"direct", "residual"}:
+      raise ValueError(f"Unsupported jepa_prediction_mode={self.config.jepa_prediction_mode!r}")
     self._configure_network_transfer(self.online_network)
     self._configure_network_transfer(self.target_network)
 
@@ -179,13 +205,18 @@ class DERAgent:
         self._freeze_encoder_batch_norm(network)
       return
     freeze_encoder = (
-        self.config.transfer_mode in {"linear_probe", "attentive_probe"}
+        self.config.transfer_mode in {"linear_probe", "attentive_probe", "jepa_probe"}
         or self.config.encoder_lr_scale <= 0.0
     )
     if freeze_encoder:
       self._set_encoder_trainable(network, trainable=False)
-      if self.config.transfer_mode in {"linear_probe", "attentive_probe"}:
-        self._set_reducer_trainable(network, trainable=True)
+      if self.config.transfer_mode in {"linear_probe", "attentive_probe", "jepa_probe"}:
+        self._set_probe_adapter_modules_trainable(network, trainable=True)
+    if self.config.transfer_mode in {"jepa_probe", "jepa_full_finetune"}:
+      network.ensure_jepa_predictor(
+          action_dim=self.config.jepa_action_dim,
+          device=self.device,
+      )
     if self.config.freeze_encoder_bn:
       self._freeze_encoder_batch_norm(network)
 
@@ -215,6 +246,22 @@ class DERAgent:
     if reducer is None:
       return
     for parameter in reducer.parameters():
+      parameter.requires_grad = trainable
+
+  def _set_probe_adapter_modules_trainable(
+      self,
+      network: RainbowDQNNetwork,
+      *,
+      trainable: bool,
+  ) -> None:
+    self._set_reducer_trainable(network, trainable=trainable)
+    mix_logits = getattr(network.encoder, "mix_logits", None)
+    if mix_logits is not None:
+      mix_logits.requires_grad = trainable
+    input_adapter = getattr(network.encoder, "input_adapter", None)
+    if input_adapter is None:
+      return
+    for parameter in input_adapter.parameters():
       parameter.requires_grad = trainable
 
   def _has_lora_adapters(self, network: RainbowDQNNetwork) -> bool:
@@ -304,7 +351,16 @@ class DERAgent:
     assert output.logits is not None
     chosen_logits = output.logits[torch.arange(actions.shape[0], device=self.device), actions]
     per_sample_loss = -(target * F.log_softmax(chosen_logits, dim=-1)).sum(dim=-1)
-    loss = (loss_weights * per_sample_loss).mean()
+    dqn_loss = (loss_weights * per_sample_loss).mean()
+    jepa_loss = self._jepa_loss(states, next_states, actions)
+    straightening_loss = self._temporal_straightening_loss(batch)
+    sigreg_loss = self._sigreg_loss(states, next_states)
+    loss = (
+        dqn_loss
+        + self.config.jepa_loss_weight * jepa_loss
+        + self.config.temporal_straightening_weight * straightening_loss
+        + self.config.lambda_sigreg * sigreg_loss
+    )
 
     self.optimizer.zero_grad(set_to_none=True)
     loss.backward()
@@ -314,12 +370,120 @@ class DERAgent:
     self.gradient_steps += 1
 
     priorities = torch.sqrt(per_sample_loss.detach() + 1e-10).cpu().numpy()
-    return {
+    metrics = {
         "TotalLoss": float(loss.detach().cpu()),
         "DQNLoss": float(per_sample_loss.mean().detach().cpu()),
         "GradNorm": float(torch.as_tensor(grad_norm).detach().cpu()),
         "priorities": priorities,
     }
+    if self.config.transfer_mode in {"jepa_probe", "jepa_full_finetune"}:
+      metrics["JEPALoss"] = float(jepa_loss.detach().cpu())
+    if self.config.temporal_straightening_weight > 0:
+      metrics["TemporalStraighteningLoss"] = float(straightening_loss.detach().cpu())
+    if self.config.lambda_sigreg > 0:
+      metrics["SIGRegLoss"] = float(sigreg_loss.detach().cpu())
+    metrics.update(self._transfer_metrics())
+    return metrics
+
+  def _jepa_loss(
+      self,
+      states: torch.Tensor,
+      next_states: torch.Tensor,
+      actions: torch.Tensor,
+  ) -> torch.Tensor:
+    if (
+        self.config.transfer_mode not in {"jepa_probe", "jepa_full_finetune"}
+        or self.config.jepa_loss_weight <= 0
+    ):
+      return torch.zeros((), device=self.device)
+    current_latent = self.online_network.encode_jepa_latent(states, eval_mode=False)
+    predicted_update = self.online_network.predict_next_jepa_latent(
+        current_latent,
+        actions,
+        action_dim=self.config.jepa_action_dim,
+    )
+    if self.config.jepa_prediction_mode == "residual":
+      predicted_next = current_latent + predicted_update
+    else:
+      predicted_next = predicted_update
+    with torch.no_grad():
+      target_next = self.online_network.encode_jepa_latent(next_states, eval_mode=False)
+    predicted_next = F.layer_norm(predicted_next, predicted_next.shape[-1:])
+    target_next = F.layer_norm(target_next, target_next.shape[-1:])
+    return F.mse_loss(predicted_next, target_next)
+
+  def _sigreg_loss(
+      self,
+      states: torch.Tensor,
+      next_states: torch.Tensor,
+  ) -> torch.Tensor:
+    if (
+        self.config.transfer_mode not in {"jepa_probe", "jepa_full_finetune"}
+        or self.config.lambda_sigreg <= 0
+    ):
+      return torch.zeros((), device=self.device)
+    current_latent = self.online_network.encode_jepa_latent(states, eval_mode=False)
+    next_latent = self.online_network.encode_jepa_latent(next_states, eval_mode=False)
+    embeddings = torch.cat([current_latent, next_latent], dim=0)
+    return self._sigreg_embedding_loss(embeddings)
+
+  def _sigreg_embedding_loss(self, embeddings: torch.Tensor) -> torch.Tensor:
+    embeddings = embeddings.float()
+    num_slices = min(256, embeddings.shape[-1])
+    integration_points = torch.linspace(
+        -5.0,
+        5.0,
+        17,
+        device=embeddings.device,
+        dtype=embeddings.dtype,
+    )
+    projection_generator = torch.Generator(device=embeddings.device)
+    projection_generator.manual_seed(self.gradient_steps)
+    projections = torch.randn(
+        (num_slices, embeddings.shape[-1]),
+        generator=projection_generator,
+        device=embeddings.device,
+        dtype=embeddings.dtype,
+    )
+    projections = F.normalize(projections, dim=-1)
+    projected = embeddings @ projections.T
+    values = projected.unsqueeze(-1) * integration_points
+    empirical_real = torch.cos(values).mean(dim=0)
+    empirical_imag = torch.sin(values).mean(dim=0)
+    target_real = torch.exp(-0.5 * integration_points.square()).unsqueeze(0)
+    return ((empirical_real - target_real).square() + empirical_imag.square()).mean()
+
+  def _temporal_straightening_loss(self, batch: dict[str, Any]) -> torch.Tensor:
+    if (
+        self.config.transfer_mode not in {"jepa_probe", "jepa_full_finetune", "lora"}
+        or self.config.temporal_straightening_weight <= 0
+    ):
+      return torch.zeros((), device=self.device)
+    states = self._batch_tensor(batch["state"])
+    if states.shape[1] < 3:
+      return torch.zeros((), device=self.device)
+    latents = []
+    for time_index in range(3):
+      latents.append(
+          self.online_network.encode_jepa_latent(
+              states[:, time_index],
+              eval_mode=False,
+          )
+      )
+    velocity_t = latents[1] - latents[0]
+    velocity_next = latents[2] - latents[1]
+    loss = 1.0 - F.cosine_similarity(velocity_t, velocity_next, dim=-1)
+    if "same_trajectory" in batch:
+      same_trajectory = self._batch_tensor(batch["same_trajectory"]).float()
+      mask = same_trajectory[:, 2].clamp(0.0, 1.0)
+      return (loss * mask).sum() / mask.sum().clamp_min(1.0)
+    return loss.mean()
+
+  def _transfer_metrics(self) -> dict[str, float]:
+    layer_mix_metrics = getattr(self.online_network.encoder, "layer_mix_metrics", None)
+    if layer_mix_metrics is None:
+      return {}
+    return layer_mix_metrics()
 
   def _maybe_update_target(self) -> None:
     if self.gradient_steps % self.config.target_update_period != 0:

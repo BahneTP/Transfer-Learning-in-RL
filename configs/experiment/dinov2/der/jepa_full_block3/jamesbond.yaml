@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - /experiment/dinov2/der/full_block3/jamesbond
+  - _self_
+
+algorithm:
+  transfer_mode: jepa_full_finetune
+  dinov2_output_block: 3
+  encoder_lr_scale: 1.0
+  jepa_loss_weight: 1.0
+  jepa_action_dim: 64
+  jepa_prediction_mode: direct

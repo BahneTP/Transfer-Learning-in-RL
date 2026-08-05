@@ -144,12 +144,21 @@ class Atari100KAlgorithm(BaseAlgorithm):
         width_scale: int = 1,
         resnet18_weights: str | None = None,
         resnet18_variant: str = "resnet_layer3_reduced",
+        dinov2_weights: str | None = "models/dinov2_vits14_pretrain.pth",
+        dinov2_output_block: int = 12,
+        dinov2_output_mode: str = "single_block",
+        dinov2_mix_blocks: tuple[int, ...] | list[int] | None = None,
         transfer_mode: str = "none",
         encoder_lr_scale: float = 1.0,
         freeze_encoder_bn: bool = False,
-        lora_rank: int = 4,
-        lora_alpha: float = 8.0,
+        lora_rank: int = 1,
+        lora_alpha: float = 2.0,
         lora_dropout: float = 0.0,
+        jepa_loss_weight: float = 1.0,
+        jepa_action_dim: int = 64,
+        jepa_prediction_mode: str = "direct",
+        temporal_straightening_weight: float = 0.0,
+        lambda_sigreg: float = 0.0,
         renormalize_output: bool = False,
         data_augmentation: bool = False,
         batches_to_group: int = 1,
@@ -215,12 +224,21 @@ class Atari100KAlgorithm(BaseAlgorithm):
             "width_scale": width_scale,
             "resnet18_weights": resnet18_weights,
             "resnet18_variant": resnet18_variant,
+            "dinov2_weights": dinov2_weights,
+            "dinov2_output_block": dinov2_output_block,
+            "dinov2_output_mode": dinov2_output_mode,
+            "dinov2_mix_blocks": dinov2_mix_blocks or tuple(range(1, 13)),
             "transfer_mode": transfer_mode,
             "encoder_lr_scale": encoder_lr_scale,
             "freeze_encoder_bn": freeze_encoder_bn,
             "lora_rank": lora_rank,
             "lora_alpha": lora_alpha,
             "lora_dropout": lora_dropout,
+            "jepa_loss_weight": jepa_loss_weight,
+            "jepa_action_dim": jepa_action_dim,
+            "jepa_prediction_mode": jepa_prediction_mode,
+            "temporal_straightening_weight": temporal_straightening_weight,
+            "lambda_sigreg": lambda_sigreg,
             "renormalize_output": renormalize_output,
             "data_augmentation": data_augmentation,
             "batches_to_group": batches_to_group,
@@ -480,6 +498,8 @@ class Atari100KAlgorithm(BaseAlgorithm):
             self.replay = state.extra["replay"]
 
     def _subseq_len(self, config: ConfigT) -> int:
+        if getattr(config, "temporal_straightening_weight", 0.0) > 0:
+            return 3
         return int(getattr(config, "jumps", 0)) + 1 if isinstance(config, BBFConfig) else 1
 
     def _replay_update_horizon(self, config: ConfigT) -> int:

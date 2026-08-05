@@ -44,6 +44,10 @@ class SACBBFAgent(BBFAgent):
         width_scale=self.config.width_scale,
         resnet18_weights=self.config.resnet18_weights,
         resnet18_variant=self.config.resnet18_variant,  # type: ignore[arg-type]
+        dinov2_weights=self.config.dinov2_weights,
+        dinov2_output_block=self.config.dinov2_output_block,
+        dinov2_output_mode=self.config.dinov2_output_mode,
+        dinov2_mix_blocks=self.config.dinov2_mix_blocks,
         probe_type=self._network_probe_type(),  # type: ignore[arg-type]
         renormalize_output=self.config.renormalize_output,
         input_channels=self.config.stack_size,
@@ -64,10 +68,10 @@ class SACBBFAgent(BBFAgent):
         alpha_params.append(parameter)
         continue
       has_weight_decay = parameter.ndim != 1
-      if name.startswith("encoder."):
-        (encoder_decay_params if has_weight_decay else encoder_no_decay_params).append(parameter)
-      elif name.startswith(("policy_projection", "predict_policy", "policy")):
+      if name.startswith(("policy_projection", "predict_policy", "policy")):
         (policy_decay_params if has_weight_decay else policy_no_decay_params).append(parameter)
+      elif name.startswith("encoder.") and not self._uses_base_lr(name):
+        (encoder_decay_params if has_weight_decay else encoder_no_decay_params).append(parameter)
       else:
         (head_decay_params if has_weight_decay else head_no_decay_params).append(parameter)
 
