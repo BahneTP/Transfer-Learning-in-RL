@@ -1407,3 +1407,35 @@ def test_sac_bbf_train_step_includes_policy_metrics():
     assert "PolicyLoss" in metrics
     assert "Entropy" in metrics
     assert metrics["PolicySampleActionHistogram"].shape == (4,)
+
+
+def test_subsequence_replay_uses_horizon_aligned_next_state_and_terminal():
+    from src.algorithms.atari100k.replay import SubsequenceReplayBuffer
+
+    replay = SubsequenceReplayBuffer(
+        observation_shape=(1,),
+        stack_size=1,
+        replay_capacity=20,
+        batch_size=1,
+        subseq_len=1,
+        update_horizon=3,
+        gamma=0.5,
+        seed=0,
+    )
+    for i in range(8):
+        replay.add(
+            np.array([[i]], dtype=np.uint8),
+            np.array([0], dtype=np.int32),
+            np.array([float(i)], dtype=np.float32),
+            np.array([1 if i == 4 else 0], dtype=np.uint8),
+        )
+
+    batch = replay.sample_transition_batch(
+        indices=(np.array([2]), np.array([0]), np.array([0])),
+    )
+
+    assert batch["state"][0, 0, 0, 0] == 2
+    assert batch["return"][0, 0] == pytest.approx(2.0 + 0.5 * 3.0 + 0.25 * 4.0)
+    assert batch["discount"][0, 0] == pytest.approx(0.5**3)
+    assert batch["terminal"][0, 0]
+    assert batch["next_state"][0, 0, 0, 0] == 5

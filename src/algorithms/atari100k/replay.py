@@ -330,18 +330,30 @@ class SubsequenceReplayBuffer:
     state_indices = state_indices.reshape(batch_size * subseq_len) % self._replay_length
     b_indices = b_indices[:, None].repeat(subseq_len, axis=1).reshape(batch_size * subseq_len)
     censor_before = censor_before[:, None].repeat(subseq_len, axis=1).reshape(batch_size * subseq_len)
-    trajectory_indices = (np.arange(-1, update_horizon - 1)[:, None] + state_indices[None, :]) % self._replay_length
+    reward_mask_indices = (
+        np.arange(-1, update_horizon - 1)[:, None] + state_indices[None, :]
+    ) % self._replay_length
     trajectory_b_indices = b_indices[None, :].repeat(update_horizon, axis=0)
-    trajectory_terminals = self._store["terminal"][trajectory_indices, trajectory_b_indices]
-    trajectory_terminals[0, :] = 0
-    is_terminal_transition = trajectory_terminals.any(0)
-    valid_mask = (1 - trajectory_terminals).cumprod(0)
+    reward_mask_terminals = self._store["terminal"][reward_mask_indices, trajectory_b_indices]
+    reward_mask_terminals[0, :] = 0
+    valid_mask = (1 - reward_mask_terminals).cumprod(0)
     trajectory_discount_vector = valid_mask * cumulative_discount_vector[:update_horizon, None]
-    trajectory_rewards = self._store["reward"][(trajectory_indices + 1) % self._replay_length, trajectory_b_indices]
+    trajectory_rewards = self._store["reward"][
+        (reward_mask_indices + 1) % self._replay_length,
+        trajectory_b_indices,
+    ]
     returns = np.cumsum(trajectory_discount_vector * trajectory_rewards, axis=0)
     update_horizons = np.ones(batch_size * subseq_len, dtype=np.int32) * (update_horizon - 1)
     returns = returns[update_horizons, np.arange(batch_size * subseq_len)]
-    next_indices = (state_indices + update_horizons) % self._replay_length
+    bootstrap_terminal_indices = (
+        np.arange(update_horizon)[:, None] + state_indices[None, :]
+    ) % self._replay_length
+    bootstrap_terminals = self._store["terminal"][
+        bootstrap_terminal_indices,
+        trajectory_b_indices,
+    ]
+    is_terminal_transition = bootstrap_terminals.any(0)
+    next_indices = (state_indices + update_horizon) % self._replay_length
     outputs: dict[str, np.ndarray | torch.Tensor] = {}
     for element in self.get_transition_elements(batch_size, subseq_len):
       name = element.name
